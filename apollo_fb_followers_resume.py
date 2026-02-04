@@ -1,8 +1,9 @@
 import os
-import time
 import re
+import time
+from datetime import datetime
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
@@ -14,7 +15,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
-PAGE_URL = "https://www.facebook.com/UseApolloIo/about"
+START_URL = "https://www.facebook.com/UseApolloIo/followers/"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -22,17 +23,13 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 EXCEL_FILE = os.path.join(
     OUTPUT_DIR,
-    "apollo_facebook_page_about.xlsx"
+    "apollo_page_followers.xlsx"
 )
 
 HEADERS = [
-    "Page Name",
-    "Page URL",
-    "Website",
-    "Email",
-    "Phone",
-    "Instagram",
-    "LinkedIn",
+    "S.No",
+    "Facebook Name",
+    "Facebook Profile URL",
 ]
 
 
@@ -87,81 +84,103 @@ def normalize(text):
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def find_text_by_label(driver, label):
-    try:
-        el = driver.find_element(
-            By.XPATH,
-            f"//span[text()='{label}']/ancestor::div[1]//span[last()]"
-        )
-        return normalize(el.text)
-    except:
-        return ""
+def is_valid_name(name):
+    bad = {
+        "followers", "following", "about", "mentions",
+        "reviews", "reels", "photos", "home"
+    }
+    return name and name.lower() not in bad and len(name) > 2
 
 
-def find_social_links(driver):
-    links = {"instagram": "", "linkedin": ""}
+# ================= EXCEL =================
+def init_or_resume_excel():
+    collected = set()
 
-    try:
-        anchors = driver.find_elements(By.XPATH, "//a[@href]")
-    except:
-        return links
+    if os.path.exists(EXCEL_FILE):
+        wb = load_workbook(EXCEL_FILE)
+        ws = wb.active
+        sno = ws.max_row
 
-    for a in anchors:
-        try:
-            href = a.get_attribute("href") or ""
-            if not links["instagram"] and "instagram.com" in href:
-                links["instagram"] = href
-            elif not links["linkedin"] and "linkedin.com" in href:
-                links["linkedin"] = href
-        except StaleElementReferenceException:
-            continue
+        for row in ws.iter_rows(min_row=2, values_only=True):
+            if row and row[2]:
+                collected.add(row[2])
 
-    return links
+        print(f"Resuming with {len(collected)} existing followers")
+
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Followers"
+
+        bold = Font(bold=True)
+        for i, h in enumerate(HEADERS, start=1):
+            c = ws.cell(1, i, h)
+            c.font = bold
+
+        sno = 1
+        print("Creating new followers Excel")
+
+    return wb, ws, collected, sno
 
 
 # ================= MAIN =================
-def scrape_page_about():
+def scrape_followers():
     driver = init_driver()
     load_facebook_cookies(driver)
 
-    driver.get(PAGE_URL)
+    if "login" in driver.current_url.lower():
+        raise Exception("Cookie login failed")
+
+    driver.get(START_URL)
     time.sleep(5)
 
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Page About"
+    wb, ws, collected, sno = init_or_resume_excel()
 
-    bold = Font(bold=True)
-    for i, h in enumerate(HEADERS, start=1):
-        cell = ws.cell(1, i, h)
-        cell.font = bold
+    no_new_rounds = 0
+    MAX_NO_NEW = 15
 
-    try:
-        page_name = driver.find_element(By.XPATH, "//h1").text
-    except:
-        page_name = "Unknown"
+    print("Collecting followers")
 
-    website = find_text_by_label(driver, "Website")
-    email = find_text_by_label(driver, "Email")
-    phone = find_text_by_label(driver, "Phone")
+    while no_new_rounds < MAX_NO_NEW:
+        found = 0
 
-    socials = find_social_links(driver)
+        anchors = driver.find_elements(
+            By.XPATH,
+            "//div[@role='main']//a[contains(@href,'/profile.php') or contains(@href,'/people/')]"
+        )
 
-    ws.append([
-        page_name,
-        PAGE_URL.replace("/about", ""),
-        website,
-        email,
-        phone,
-        socials["instagram"],
-        socials["linkedin"],
-    ])
+        for a in anchors:
+            try:
+                name = normalize(a.text)
+                href = a.get_attribute("href")
+
+                if not is_valid_name(name):
+                    continue
+                if href in collected:
+                    continue
+
+                collected.add(href)
+                ws.append([sno, name, href])
+                print(f"Collected {sno}: {name}")
+
+                sno += 1
+                found += 1
+
+            except StaleElementReferenceException:
+                continue
+
+        if found == 0:
+            no_new_rounds += 1
+        else:
+            no_new_rounds = 0
+
+        driver.execute_script("window.scrollBy(0, 1600);")
+        time.sleep(2)
 
     wb.save(EXCEL_FILE)
     driver.quit()
-
-    print("Data extracted successfully:", EXCEL_FILE)
+    print("Followers scraping completed")
 
 
 if __name__ == "__main__":
-    scrape_page_about()
+    scrape_followers()

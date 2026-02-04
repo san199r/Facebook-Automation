@@ -1,7 +1,6 @@
 import os
 import re
 import time
-from datetime import datetime
 
 from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
@@ -31,6 +30,14 @@ HEADERS = [
     "Facebook Name",
     "Facebook Profile URL",
 ]
+
+
+# ================= SAFE PRINT =================
+def safe_print(text):
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="ignore").decode())
 
 
 # ================= DRIVER =================
@@ -105,7 +112,7 @@ def init_or_resume_excel():
             if row and row[2]:
                 collected.add(row[2])
 
-        print(f"Resuming with {len(collected)} existing followers")
+        safe_print(f"Resuming with {len(collected)} existing followers")
 
     else:
         wb = Workbook()
@@ -118,7 +125,7 @@ def init_or_resume_excel():
             c.font = bold
 
         sno = 1
-        print("Creating new followers Excel")
+        safe_print("Creating new followers Excel")
 
     return wb, ws, collected, sno
 
@@ -139,7 +146,7 @@ def scrape_followers():
     no_new_rounds = 0
     MAX_NO_NEW = 15
 
-    print("Collecting followers")
+    safe_print("Collecting followers")
 
     while no_new_rounds < MAX_NO_NEW:
         found = 0
@@ -161,7 +168,8 @@ def scrape_followers():
 
                 collected.add(href)
                 ws.append([sno, name, href])
-                print(f"Collected {sno}: {name}")
+
+                safe_print(f"Collected {sno}")
 
                 sno += 1
                 found += 1
@@ -179,7 +187,7 @@ def scrape_followers():
 
     wb.save(EXCEL_FILE)
     driver.quit()
-    print("Followers scraping completed")
+    safe_print("Followers scraping completed successfully")
 
 
 if __name__ == "__main__":

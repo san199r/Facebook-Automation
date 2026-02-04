@@ -1,5 +1,6 @@
 # ======================================================
 # Jenkins-safe Facebook Followers Full Data Extractor
+# (StaleElementReferenceException FIXED)
 # ======================================================
 
 import sys
@@ -21,6 +22,7 @@ from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service as ChromeService
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import StaleElementReferenceException
 
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -30,8 +32,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ======================================================
 FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
 OUT_XLSX = "facebook_full_contact_data.xlsx"
-MAX_FOLLOWERS = 10   # increase slowly to avoid blocks
-
+MAX_FOLLOWERS = 10
 
 HEADERS = [
     "S.No",
@@ -96,7 +97,7 @@ def facebook_login(driver, wait):
 
 
 # ======================================================
-# EXTRACT CONTACT DETAILS FROM PROFILE
+# EXTRACT CONTACT DETAILS
 # ======================================================
 def extract_contact_details(driver):
     details = {
@@ -111,25 +112,25 @@ def extract_contact_details(driver):
 
     time.sleep(4)
 
-    # Extract links
     links = driver.find_elements(By.TAG_NAME, "a")
     for link in links:
-        href = link.get_attribute("href")
-        if not href:
+        try:
+            href = link.get_attribute("href")
+            if not href:
+                continue
+
+            href_l = href.lower()
+
+            if "linkedin.com" in href_l:
+                details["External LinkedIn"] = href
+            elif "instagram.com" in href_l:
+                details["External Instagram"] = href
+            elif href.startswith("http") and details["Website"] == "":
+                details["Website"] = href
+
+        except StaleElementReferenceException:
             continue
 
-        href_l = href.lower()
-
-        if "linkedin.com" in href_l:
-            details["External LinkedIn"] = href
-        elif "instagram.com" in href_l:
-            details["External Instagram"] = href
-        elif "facebook.com" in href_l and details["External Facebook"] == "":
-            details["External Facebook"] = href
-        elif href.startswith("http") and details["Website"] == "":
-            details["Website"] = href
-
-    # Extract text-based info (best-effort)
     page_text = driver.page_source.lower()
 
     phone_match = re.search(r"\+?\d[\d\s\-]{8,}", page_text)
@@ -146,26 +147,40 @@ def extract_contact_details(driver):
 
 
 # ======================================================
-# EXTRACT FOLLOWERS + DETAILS
+# EXTRACT FOLLOWERS (STALE-SAFE)
 # ======================================================
 def extract_followers_with_details(driver, limit):
     print("Opening followers page...")
     driver.get(FOLLOWERS_URL)
     time.sleep(8)
 
-    data = []
+    followers = []
     seen = set()
 
-    follower_links = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
+    # STEP 1: collect raw data (NO WebElements later)
+    links = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
 
-    for link in follower_links:
-        name = link.text.strip()
-        profile_url = link.get_attribute("href")
+    for link in links:
+        try:
+            name = link.text.strip()
+            href = link.get_attribute("href")
 
-        if not name or not profile_url or profile_url in seen:
+            if name and href and href not in seen:
+                followers.append((name, href))
+                seen.add(href)
+
+        except StaleElementReferenceException:
             continue
 
-        seen.add(profile_url)
+        if len(followers) >= limit:
+            break
+
+    print(f"Found {len(followers)} follower profiles.")
+
+    # STEP 2: visit profiles safely
+    data = []
+
+    for name, profile_url in followers:
         print(f"Processing profile: {name}")
 
         driver.get(profile_url)
@@ -185,12 +200,8 @@ def extract_followers_with_details(driver, limit):
             details["External Instagram"],
         ])
 
-        if len(data) >= limit:
-            break
+        time.sleep(3)
 
-        time.sleep(3)  # slow down to avoid blocks
-
-    print(f"Collected {len(data)} profiles.")
     return data
 
 

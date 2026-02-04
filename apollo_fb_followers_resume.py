@@ -2,50 +2,23 @@ import os
 import re
 import time
 
-from openpyxl import Workbook, load_workbook
-from openpyxl.styles import Font
+from openpyxl import load_workbook
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import StaleElementReferenceException
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.common.exceptions import TimeoutException
 
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
-START_URL = "https://www.facebook.com/UseApolloIo/followers/"
+EXCEL_FILE = os.path.join("output", "apollo_page_fb_followers.xlsx")
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
-OUTPUT_DIR = "output"
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-
-EXCEL_FILE = os.path.join(
-    OUTPUT_DIR,
-    "apollo_page_fb_followers.xlsx"
-)
-
-HEADERS = [
-    "S.No",
-    "Facebook Name",
-    "Facebook Page URL",
-    "Location",
-    "Phone",
-    "Email",
-    "Website",
-    "External Facebook",
-    "External LinkedIn",
-    "External Instagram",
-]
-
-
-# ================= SAFE PRINT =================
-def safe_print(text):
-    try:
-        print(text)
-    except UnicodeEncodeError:
-        print(text.encode("ascii", errors="ignore").decode())
+SLEEP_BETWEEN_PROFILES = 6
 
 
 # ================= DRIVER =================
@@ -64,11 +37,11 @@ def init_driver():
 
 
 # ================= COOKIES =================
-def load_facebook_cookies(driver, cookie_file):
+def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
     time.sleep(3)
 
-    with open(cookie_file, "r", encoding="utf-8") as f:
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
         for line in f:
             if line.startswith("#") or not line.strip():
                 continue
@@ -94,131 +67,94 @@ def load_facebook_cookies(driver, cookie_file):
     time.sleep(5)
 
 
-# ================= EXCEL (RESUME) =================
-def init_or_resume_excel():
-    collected_urls = set()
-
-    if os.path.exists(EXCEL_FILE):
-        wb = load_workbook(EXCEL_FILE)
-        ws = wb.active
-
-        start_sno = ws.max_row
-
-        for row in ws.iter_rows(min_row=2, values_only=True):
-            if row and row[2]:
-                collected_urls.add(row[2])
-
-        safe_print(f"Resuming Excel with {len(collected_urls)} existing records")
-
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Apollo Followers"
-
-        bold = Font(bold=True)
-        for c, h in enumerate(HEADERS, start=1):
-            cell = ws.cell(1, c, h)
-            cell.font = bold
-
-        start_sno = 1
-        safe_print("Creating new Excel file")
-
-    return wb, ws, collected_urls, start_sno
-
-
 # ================= HELPERS =================
 def normalize(text):
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def is_valid_name(name):
-    bad = {
-        "followers", "following", "about", "mentions", "reviews",
-        "reels", "photos", "home", "friends", "messages"
+def extract_links(driver):
+    links = driver.find_elements(By.XPATH, "//a[@href]")
+    result = {
+        "website": "",
+        "fb": "",
+        "linkedin": "",
+        "instagram": "",
     }
-    return name and name.lower() not in bad and len(name) > 2
+
+    for a in links:
+        href = a.get_attribute("href") or ""
+
+        if not result["linkedin"] and "linkedin.com" in href:
+            result["linkedin"] = href
+        elif not result["instagram"] and "instagram.com" in href:
+            result["instagram"] = href
+        elif not result["website"] and href.startswith("http") and "facebook.com" not in href:
+            result["website"] = href
+        elif not result["fb"] and "facebook.com" in href:
+            result["fb"] = href
+
+    return result
+
+
+def extract_location(driver):
+    try:
+        about = driver.find_element(By.XPATH, "//span[contains(text(),'Lives in')]")
+        return normalize(about.text)
+    except:
+        return ""
 
 
 # ================= MAIN =================
-def scrape_followers():
+def enrich_profiles():
+    if not os.path.exists(EXCEL_FILE):
+        raise Exception("Excel file not found")
+
+    wb = load_workbook(EXCEL_FILE)
+    ws = wb.active
+
     driver = init_driver()
-    wait = WebDriverWait(driver, 30)
+    wait = WebDriverWait(driver, 20)
 
-    safe_print("Loading Facebook cookies")
-    load_facebook_cookies(driver, COOKIE_FILE)
+    load_facebook_cookies(driver)
 
-    if "login" in driver.current_url.lower():
-        raise Exception("Cookie login failed")
+    for row in range(2, ws.max_row + 1):
+        profile_url = ws.cell(row, 3).value
+        website = ws.cell(row, 7).value
 
-    safe_print("Login successful")
+        if not profile_url:
+            continue
 
-    driver.get(START_URL)
-    time.sleep(5)
+        # Skip already enriched rows
+        if website:
+            continue
 
-    wb, ws, collected, sno = init_or_resume_excel()
+        print(f"Enriching row {row}: {profile_url}")
 
-    no_new_rounds = 0
-    MAX_NO_NEW = 15
+        try:
+            driver.get(profile_url)
+            time.sleep(4)
 
-    safe_print("Collecting Apollo followers")
+            links = extract_links(driver)
+            location = extract_location(driver)
 
-    while no_new_rounds < MAX_NO_NEW:
-        found_this_round = 0
+            ws.cell(row, 4).value = location
+            ws.cell(row, 7).value = links["website"]
+            ws.cell(row, 8).value = links["fb"]
+            ws.cell(row, 9).value = links["linkedin"]
+            ws.cell(row, 10).value = links["instagram"]
 
-        anchors = driver.find_elements(
-            By.XPATH,
-            "//div[@role='main']//a[contains(@href,'/profile.php') or contains(@href,'/people/')]"
-        )
+            wb.save(EXCEL_FILE)
 
-        for a in anchors:
-            try:
-                name = normalize(a.text)
-                href = a.get_attribute("href")
+            time.sleep(SLEEP_BETWEEN_PROFILES)
 
-                if not is_valid_name(name):
-                    continue
-
-                if href in collected:
-                    continue
-
-                collected.add(href)
-
-                ws.append([
-                    sno,
-                    name,
-                    href,
-                    "",  # Location
-                    "",  # Phone
-                    "",  # Email
-                    "",  # Website
-                    "",  # External Facebook
-                    "",  # External LinkedIn
-                    "",  # External Instagram
-                ])
-
-                safe_print(f"Collected {sno}: {name}")
-
-                sno += 1
-                found_this_round += 1
-
-            except StaleElementReferenceException:
-                continue
-
-        if found_this_round == 0:
-            no_new_rounds += 1
-            safe_print(f"No new followers ({no_new_rounds}/{MAX_NO_NEW})")
-        else:
-            no_new_rounds = 0
-
-        driver.execute_script("window.scrollBy(0, 1600);")
-        time.sleep(2)
-
-    wb.save(EXCEL_FILE)
-    safe_print(f"Excel saved at: {EXCEL_FILE}")
+        except TimeoutException:
+            print(f"Timeout on {profile_url}")
+            continue
 
     driver.quit()
-    safe_print("Browser closed")
+    wb.save(EXCEL_FILE)
+    print("Enrichment completed")
 
 
 if __name__ == "__main__":
-    scrape_followers()
+    enrich_profiles()

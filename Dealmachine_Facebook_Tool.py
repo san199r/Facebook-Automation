@@ -30,7 +30,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ======================================================
 # CONFIG
 # ======================================================
-FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
+FOLLOWERS_URL = "https://www.facebook.com/UseApolloIo/followers/"
 OUT_XLSX = "facebook_full_contact_data.xlsx"
 MAX_FOLLOWERS = 10
 
@@ -250,3 +250,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+

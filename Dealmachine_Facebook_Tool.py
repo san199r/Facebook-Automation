@@ -1,7 +1,6 @@
-# =========================================
-# Jenkins-safe Facebook Followers Scraper
-# Headless Chrome Enabled
-# =========================================
+# ======================================================
+# Jenkins-safe Facebook Followers Full Data Extractor
+# ======================================================
 
 import sys
 try:
@@ -11,6 +10,7 @@ except Exception:
 
 import os
 import time
+import re
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -25,20 +25,33 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-# =========================================
+# ======================================================
 # CONFIG
-# =========================================
+# ======================================================
 FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
-OUT_XLSX = "facebook_dealmachine_followers.xlsx"
-MAX_FOLLOWERS = 20   # increase if needed
+OUT_XLSX = "facebook_full_contact_data.xlsx"
+MAX_FOLLOWERS = 10   # increase slowly to avoid blocks
 
 
-# =========================================
+HEADERS = [
+    "S.No",
+    "Facebook Name",
+    "Facebook Page URL",
+    "Location",
+    "Phone",
+    "Email",
+    "Website",
+    "External Facebook",
+    "External LinkedIn",
+    "External Instagram",
+]
+
+
+# ======================================================
 # SETUP DRIVER (HEADLESS)
-# =========================================
+# ======================================================
 def setup_driver():
     options = webdriver.ChromeOptions()
-
     options.add_argument("--headless=new")
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
@@ -49,14 +62,13 @@ def setup_driver():
 
     service = ChromeService(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
-
     wait = WebDriverWait(driver, 25)
     return driver, wait
 
 
-# =========================================
+# ======================================================
 # FACEBOOK LOGIN
-# =========================================
+# ======================================================
 def facebook_login(driver, wait):
     username = os.getenv("FB_USERNAME")
     password = os.getenv("FB_PASSWORD")
@@ -75,7 +87,6 @@ def facebook_login(driver, wait):
 
     email.clear()
     email.send_keys(username)
-
     passwd.clear()
     passwd.send_keys(password)
     passwd.send_keys(Keys.ENTER)
@@ -84,88 +95,142 @@ def facebook_login(driver, wait):
     print("Login completed.")
 
 
-# =========================================
-# EXTRACT FOLLOWERS
-# =========================================
-def extract_followers(driver, limit):
+# ======================================================
+# EXTRACT CONTACT DETAILS FROM PROFILE
+# ======================================================
+def extract_contact_details(driver):
+    details = {
+        "Location": "",
+        "Phone": "",
+        "Email": "",
+        "Website": "",
+        "External Facebook": "",
+        "External LinkedIn": "",
+        "External Instagram": ""
+    }
+
+    time.sleep(4)
+
+    # Extract links
+    links = driver.find_elements(By.TAG_NAME, "a")
+    for link in links:
+        href = link.get_attribute("href")
+        if not href:
+            continue
+
+        href_l = href.lower()
+
+        if "linkedin.com" in href_l:
+            details["External LinkedIn"] = href
+        elif "instagram.com" in href_l:
+            details["External Instagram"] = href
+        elif "facebook.com" in href_l and details["External Facebook"] == "":
+            details["External Facebook"] = href
+        elif href.startswith("http") and details["Website"] == "":
+            details["Website"] = href
+
+    # Extract text-based info (best-effort)
+    page_text = driver.page_source.lower()
+
+    phone_match = re.search(r"\+?\d[\d\s\-]{8,}", page_text)
+    if phone_match:
+        details["Phone"] = phone_match.group()
+
+    email_match = re.search(
+        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}", page_text
+    )
+    if email_match:
+        details["Email"] = email_match.group()
+
+    return details
+
+
+# ======================================================
+# EXTRACT FOLLOWERS + DETAILS
+# ======================================================
+def extract_followers_with_details(driver, limit):
     print("Opening followers page...")
     driver.get(FOLLOWERS_URL)
     time.sleep(8)
 
-    followers = []
+    data = []
     seen = set()
 
-    last_height = driver.execute_script("return document.body.scrollHeight")
+    follower_links = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
 
-    while len(followers) < limit:
-        links = driver.find_elements(By.XPATH, "//a[contains(@href,'facebook.com')]")
+    for link in follower_links:
+        name = link.text.strip()
+        profile_url = link.get_attribute("href")
 
-        for link in links:
-            name = link.text.strip()
-            href = link.get_attribute("href")
+        if not name or not profile_url or profile_url in seen:
+            continue
 
-            if not name or not href:
-                continue
+        seen.add(profile_url)
+        print(f"Processing profile: {name}")
 
-            if "/people/" in href and href not in seen:
-                seen.add(href)
-                followers.append((name, href))
+        driver.get(profile_url)
+        time.sleep(6)
 
-                if len(followers) >= limit:
-                    break
+        details = extract_contact_details(driver)
 
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(3)
+        data.append([
+            name,
+            profile_url,
+            details["Location"],
+            details["Phone"],
+            details["Email"],
+            details["Website"],
+            profile_url,
+            details["External LinkedIn"],
+            details["External Instagram"],
+        ])
 
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
+        if len(data) >= limit:
             break
-        last_height = new_height
 
-    print(f"Collected {len(followers)} followers.")
-    return followers
+        time.sleep(3)  # slow down to avoid blocks
+
+    print(f"Collected {len(data)} profiles.")
+    return data
 
 
-# =========================================
+# ======================================================
 # SAVE TO EXCEL
-# =========================================
+# ======================================================
 def save_to_excel(data):
-    print("Saving followers to Excel...")
-
     wb = Workbook()
     ws = wb.active
-    ws.title = "Followers"
+    ws.title = "Facebook Data"
 
-    headers = ["S.No", "Name", "Profile URL"]
     bold = Font(bold=True)
 
-    for col, header in enumerate(headers, start=1):
+    for col, header in enumerate(HEADERS, start=1):
         cell = ws.cell(row=1, column=col, value=header)
         cell.font = bold
 
-    for idx, (name, url) in enumerate(data, start=1):
+    for idx, row in enumerate(data, start=1):
         ws.cell(row=idx + 1, column=1, value=idx)
-        ws.cell(row=idx + 1, column=2, value=name)
-        ws.cell(row=idx + 1, column=3, value=url)
+        for col, value in enumerate(row, start=2):
+            ws.cell(row=idx + 1, column=col, value=value)
 
     wb.save(OUT_XLSX)
     print(f"Excel saved: {OUT_XLSX}")
 
 
-# =========================================
+# ======================================================
 # MAIN
-# =========================================
+# ======================================================
 def main():
     driver, wait = setup_driver()
 
     try:
         facebook_login(driver, wait)
-        followers = extract_followers(driver, MAX_FOLLOWERS)
+        data = extract_followers_with_details(driver, MAX_FOLLOWERS)
 
-        if followers:
-            save_to_excel(followers)
+        if data:
+            save_to_excel(data)
         else:
-            print("No followers found.")
+            print("No data extracted.")
 
     finally:
         print("Closing browser...")

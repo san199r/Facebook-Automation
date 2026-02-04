@@ -8,8 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
 
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -73,7 +72,10 @@ def normalize(text):
 
 
 def extract_links(driver):
-    links = driver.find_elements(By.XPATH, "//a[@href]")
+    """
+    Jenkins-safe link extraction.
+    All stale elements are ignored.
+    """
     result = {
         "website": "",
         "fb": "",
@@ -81,26 +83,39 @@ def extract_links(driver):
         "instagram": "",
     }
 
-    for a in links:
-        href = a.get_attribute("href") or ""
+    try:
+        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+    except Exception:
+        return result
 
-        if not result["linkedin"] and "linkedin.com" in href:
-            result["linkedin"] = href
-        elif not result["instagram"] and "instagram.com" in href:
-            result["instagram"] = href
-        elif not result["website"] and href.startswith("http") and "facebook.com" not in href:
-            result["website"] = href
-        elif not result["fb"] and "facebook.com" in href:
-            result["fb"] = href
+    for a in anchors:
+        try:
+            href = a.get_attribute("href")
+            if not href:
+                continue
+
+            if not result["linkedin"] and "linkedin.com" in href:
+                result["linkedin"] = href
+            elif not result["instagram"] and "instagram.com" in href:
+                result["instagram"] = href
+            elif not result["website"] and href.startswith("http") and "facebook.com" not in href:
+                result["website"] = href
+            elif not result["fb"] and "facebook.com" in href:
+                result["fb"] = href
+
+        except StaleElementReferenceException:
+            continue
+        except Exception:
+            continue
 
     return result
 
 
 def extract_location(driver):
     try:
-        about = driver.find_element(By.XPATH, "//span[contains(text(),'Lives in')]")
-        return normalize(about.text)
-    except:
+        loc = driver.find_element(By.XPATH, "//span[contains(text(),'Lives in')]")
+        return normalize(loc.text)
+    except Exception:
         return ""
 
 
@@ -119,20 +134,20 @@ def enrich_profiles():
 
     for row in range(2, ws.max_row + 1):
         profile_url = ws.cell(row, 3).value
-        website = ws.cell(row, 7).value
+        website_existing = ws.cell(row, 7).value
 
         if not profile_url:
             continue
 
         # Skip already enriched rows
-        if website:
+        if website_existing:
             continue
 
         print(f"Enriching row {row}: {profile_url}")
 
         try:
             driver.get(profile_url)
-            time.sleep(4)
+            time.sleep(5)  # Jenkins-safe delay
 
             links = extract_links(driver)
             location = extract_location(driver)
@@ -148,12 +163,15 @@ def enrich_profiles():
             time.sleep(SLEEP_BETWEEN_PROFILES)
 
         except TimeoutException:
-            print(f"Timeout on {profile_url}")
+            print(f"Timeout while loading {profile_url}")
+            continue
+        except Exception as e:
+            print(f"Error on row {row}: {e}")
             continue
 
     driver.quit()
     wb.save(EXCEL_FILE)
-    print("Enrichment completed")
+    print("Profile enrichment completed successfully")
 
 
 if __name__ == "__main__":

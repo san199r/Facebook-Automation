@@ -1,6 +1,6 @@
 # ======================================================
-# Facebook Followers Extractor – Container Scroll FIXED
-# Jenkins-safe | Robust scrolling | Full Excel output
+# Facebook Followers Scraper (RESUME ENABLED)
+# Jenkins-safe | Container Scroll | No Duplicates
 # ======================================================
 
 import sys
@@ -13,9 +13,8 @@ import os
 import time
 import re
 import random
-from datetime import datetime
 
-from openpyxl import Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
@@ -33,8 +32,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # CONFIG
 # ======================================================
 FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
-MAX_FOLLOWERS = 50          # realistic target without blocks
-MAX_NO_NEW = 15             # patience level
+MAX_FOLLOWERS_PER_RUN = 50
+MAX_NO_NEW = 15
 
 HEADERS = [
     "S.No",
@@ -52,10 +51,7 @@ HEADERS = [
 OUTPUT_DIR = os.path.join(os.getcwd(), "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
-timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUT_XLSX = os.path.join(
-    OUTPUT_DIR, f"facebook_full_contact_data_{timestamp}.xlsx"
-)
+OUT_XLSX = os.path.join(OUTPUT_DIR, "facebook_full_contact_data.xlsx")
 
 
 # ======================================================
@@ -64,7 +60,7 @@ OUT_XLSX = os.path.join(
 def setup_driver():
     options = webdriver.ChromeOptions()
 
-    # NOTE: Comment headless if you want more followers
+    # Comment this if you want non-headless (gets more followers)
     options.add_argument("--headless=new")
 
     options.add_argument("--window-size=1920,1080")
@@ -110,29 +106,70 @@ def facebook_login(driver, wait):
 
 
 # ======================================================
-# FOLLOWERS COUNT (DISPLAY)
+# LOAD EXISTING PROFILES (RESUME)
 # ======================================================
-def get_total_followers_text(driver):
-    time.sleep(4)
-    spans = driver.find_elements(By.XPATH, "//span")
-    for span in spans:
-        text = span.text.lower().strip()
-        if "followers" in text:
-            return text
-    return "Unknown"
+def load_existing_profiles():
+    existing = set()
+
+    if not os.path.exists(OUT_XLSX):
+        return existing
+
+    wb = load_workbook(OUT_XLSX)
+    ws = wb.active
+
+    for row in ws.iter_rows(min_row=2, values_only=True):
+        if row and len(row) > 2 and row[2]:
+            existing.add(row[2])
+
+    print(f"Resuming: {len(existing)} profiles already scraped")
+    return existing
 
 
 # ======================================================
-# SCROLL FOLLOWERS CONTAINER (CRITICAL FIX)
+# VALID FOLLOWER FILTER
+# ======================================================
+def is_valid_follower(name, url):
+    if not name or not url:
+        return False
+
+    name_l = name.lower()
+    url_l = url.lower()
+
+    blocked_words = [
+        "followers",
+        "following",
+        "forgotten",
+        "account",
+        "log in",
+        "sign up",
+    ]
+
+    for word in blocked_words:
+        if word in name_l:
+            return False
+
+    if "facebook.com" not in url_l:
+        return False
+
+    if url_l.endswith("#"):
+        return False
+
+    if len(name.strip()) < 3:
+        return False
+
+    return True
+
+
+# ======================================================
+# SCROLL FOLLOWERS CONTAINER
 # ======================================================
 def scroll_followers_container(driver):
     try:
-        containers = driver.find_elements(By.XPATH, "//div[@role='dialog']")
-        if containers:
-            container = containers[0]
+        dialogs = driver.find_elements(By.XPATH, "//div[@role='dialog']")
+        if dialogs:
             driver.execute_script(
                 "arguments[0].scrollTop = arguments[0].scrollHeight",
-                container
+                dialogs[0]
             )
             return True
     except Exception:
@@ -141,21 +178,18 @@ def scroll_followers_container(driver):
 
 
 # ======================================================
-# COLLECT FOLLOWERS (ROBUST)
+# COLLECT FOLLOWERS (RESUME SAFE)
 # ======================================================
-def collect_all_followers(driver):
+def collect_followers(driver, existing_profiles):
     print("Opening followers page...")
     driver.get(FOLLOWERS_URL)
     time.sleep(8)
-
-    followers_text = get_total_followers_text(driver)
-    print(f"Followers shown by Facebook: {followers_text}")
 
     collected = []
     seen = set()
     no_new = 0
 
-    while len(collected) < MAX_FOLLOWERS and no_new < MAX_NO_NEW:
+    while len(collected) < MAX_FOLLOWERS_PER_RUN and no_new < MAX_NO_NEW:
         elements = driver.find_elements(
             By.XPATH,
             "//a[contains(@href,'facebook.com') and @role='link']"
@@ -169,17 +203,16 @@ def collect_all_followers(driver):
                 href = el.get_attribute("href")
 
                 if (
-                    name
-                    and href
-                    and "facebook.com" in href
+                    is_valid_follower(name, href)
                     and href not in seen
+                    and href not in existing_profiles
                 ):
                     seen.add(href)
                     collected.append((name, href))
                     new_found += 1
                     print(f"Collected {len(collected)}: {name}")
 
-                    if len(collected) >= MAX_FOLLOWERS:
+                    if len(collected) >= MAX_FOLLOWERS_PER_RUN:
                         break
 
             except StaleElementReferenceException:
@@ -199,7 +232,7 @@ def collect_all_followers(driver):
 
         time.sleep(random.uniform(6, 9))
 
-    print(f"Total followers collected: {len(collected)}")
+    print(f"New followers collected this run: {len(collected)}")
     return collected
 
 
@@ -253,25 +286,32 @@ def extract_contact_details(driver):
 
 
 # ======================================================
-# SAVE TO EXCEL
+# SAVE / APPEND TO EXCEL
 # ======================================================
 def save_to_excel(data):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Facebook Data"
+    if os.path.exists(OUT_XLSX):
+        wb = load_workbook(OUT_XLSX)
+        ws = wb.active
+        start_row = ws.max_row + 1
+    else:
+        wb = Workbook()
+        ws = wb.active
+        ws.title = "Facebook Data"
 
-    bold = Font(bold=True)
-    for col, header in enumerate(HEADERS, start=1):
-        c = ws.cell(row=1, column=col, value=header)
-        c.font = bold
+        bold = Font(bold=True)
+        for col, header in enumerate(HEADERS, start=1):
+            c = ws.cell(row=1, column=col, value=header)
+            c.font = bold
 
-    for idx, row in enumerate(data, start=1):
-        ws.cell(row=idx + 1, column=1, value=idx)
+        start_row = 2
+
+    for idx, row in enumerate(data, start=start_row):
+        ws.cell(row=idx, column=1, value=idx - 1)
         for col, val in enumerate(row, start=2):
-            ws.cell(row=idx + 1, column=col, value=val)
+            ws.cell(row=idx, column=col, value=val)
 
     wb.save(OUT_XLSX)
-    print(f"Excel saved at: {os.path.abspath(OUT_XLSX)}")
+    print(f"Excel updated at: {os.path.abspath(OUT_XLSX)}")
 
 
 # ======================================================
@@ -282,15 +322,19 @@ def main():
 
     try:
         facebook_login(driver, wait)
-        followers = collect_all_followers(driver)
+
+        existing_profiles = load_existing_profiles()
+        new_followers = collect_followers(driver, existing_profiles)
 
         final_data = []
-        for name, url in followers:
+
+        for name, url in new_followers:
             print(f"Extracting details for: {name}")
             driver.get(url)
             time.sleep(random.uniform(4, 6))
 
             details = extract_contact_details(driver)
+
             final_data.append([
                 name,
                 url,
@@ -306,7 +350,7 @@ def main():
         if final_data:
             save_to_excel(final_data)
         else:
-            print("No data extracted.")
+            print("No new data to append.")
 
     finally:
         print("Closing browser...")

@@ -1,27 +1,14 @@
-# ======================================================
-# Facebook Followers Scraper (RESUME + SCREENSHOTS)
-# Jenkins-safe | Container Scroll | No Duplicates
-# ======================================================
-
-import sys
-try:
-    sys.stdout.reconfigure(encoding="utf-8")
-except Exception:
-    pass
-
 import os
-import time
 import re
-import random
+import time
 from datetime import datetime
 
-from openpyxl import Workbook, load_workbook
+from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
-from selenium.webdriver.chrome.service import Service as ChromeService
+from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.support.ui import WebDriverWait
 from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import StaleElementReferenceException
@@ -29,354 +16,170 @@ from selenium.common.exceptions import StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-# ======================================================
-# CONFIG
-# ======================================================
-FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
-MAX_FOLLOWERS_PER_RUN = 50
-MAX_NO_NEW = 15
+START_URL = "https://www.facebook.com/dealmachineapp/followers/"
+COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+EXCEL_FILE = os.path.join(
+    OUTPUT_DIR,
+    f"facebook_followers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
+)
 
 HEADERS = [
     "S.No",
     "Facebook Name",
     "Facebook Page URL",
-    "Location",
-    "Phone",
-    "Email",
-    "Website",
-    "External Facebook",
-    "External LinkedIn",
-    "External Instagram",
 ]
 
-OUTPUT_DIR = os.path.join(os.getcwd(), "output")
-SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
-os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
-OUT_XLSX = os.path.join(OUTPUT_DIR, "facebook_full_contact_data.xlsx")
-
-
-# ======================================================
-# DRIVER SETUP
-# ======================================================
-def setup_driver():
+def init_driver():
     options = webdriver.ChromeOptions()
-
-    # Comment next line if you want non-headless
-    options.add_argument("--headless=new")
-
-    options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
-    options.add_argument("--disable-infobars")
-    options.add_argument("--disable-extensions")
-    options.add_argument("--disable-gpu")
-    options.add_argument("--no-sandbox")
+    options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
 
-    service = ChromeService(ChromeDriverManager().install())
-    driver = webdriver.Chrome(service=service, options=options)
-    wait = WebDriverWait(driver, 25)
-    return driver, wait
+    driver = webdriver.Chrome(
+        service=Service(ChromeDriverManager().install()),
+        options=options
+    )
+    driver.set_page_load_timeout(60)
+    return driver
 
 
-# ======================================================
-# FACEBOOK LOGIN + SCREENSHOT
-# ======================================================
-def facebook_login(driver, wait):
-    username = os.getenv("FB_USERNAME")
-    password = os.getenv("FB_PASSWORD")
+def load_facebook_cookies(driver, cookie_file):
+    driver.get("https://www.facebook.com/")
+    time.sleep(3)
 
-    if not username or not password:
-        print("WARNING: FB_USERNAME or FB_PASSWORD not set.")
-        return
+    with open(cookie_file, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
 
-    print(f"Logging in as: {username}")
+            domain, flag, path, secure, expiry, name, value = line.strip().split("\t")
 
-    driver.get("https://www.facebook.com/login")
+            cookie = {
+                "name": name,
+                "value": value,
+                "domain": domain,
+                "path": path,
+            }
+
+            if expiry.isdigit():
+                cookie["expiry"] = int(expiry)
+
+            driver.add_cookie(cookie)
+
+    driver.refresh()
     time.sleep(5)
 
-    email = wait.until(EC.presence_of_element_located((By.ID, "email")))
-    passwd = wait.until(EC.presence_of_element_located((By.ID, "pass")))
 
-    email.clear()
-    email.send_keys(username)
-    passwd.clear()
-    passwd.send_keys(password)
-    passwd.send_keys(Keys.ENTER)
-
-    time.sleep(10)
-
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    login_shot = os.path.join(
-        SCREENSHOT_DIR, f"after_login_{ts}.png"
-    )
-    driver.save_screenshot(login_shot)
-
-    print("Login completed.")
-    print(f"Login screenshot saved at: {os.path.abspath(login_shot)}")
-
-
-# ======================================================
-# LOAD EXISTING PROFILES (RESUME)
-# ======================================================
-def load_existing_profiles():
-    existing = set()
-
-    if not os.path.exists(OUT_XLSX):
-        return existing
-
-    wb = load_workbook(OUT_XLSX)
+def init_excel():
+    wb = Workbook()
     ws = wb.active
+    ws.title = "Followers"
 
-    for row in ws.iter_rows(min_row=2, values_only=True):
-        if row and len(row) > 2 and row[2]:
-            existing.add(row[2])
+    bold = Font(bold=True)
+    for c, h in enumerate(HEADERS, start=1):
+        cell = ws.cell(1, c, h)
+        cell.font = bold
 
-    print(f"Resuming: {len(existing)} profiles already scraped")
-    return existing
-
-
-# ======================================================
-# FILTER VALID FOLLOWERS
-# ======================================================
-def is_valid_follower(name, url):
-    if not name or not url:
-        return False
-
-    name_l = name.lower()
-    url_l = url.lower()
-
-    blocked = [
-        "followers",
-        "following",
-        "forgotten",
-        "account",
-        "log in",
-        "sign up",
-    ]
-
-    for b in blocked:
-        if b in name_l:
-            return False
-
-    if "facebook.com" not in url_l:
-        return False
-
-    if url_l.endswith("#"):
-        return False
-
-    if len(name.strip()) < 3:
-        return False
-
-    return True
+    return wb, ws
 
 
-# ======================================================
-# SCROLL FOLLOWERS CONTAINER
-# ======================================================
-def scroll_followers_container(driver):
+def normalize(text):
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def is_valid_name(name):
+    bad = {
+        "followers", "following", "13k followers", "forgotten account?",
+        "home", "friends", "messages"
+    }
+    return name and name.lower() not in bad and len(name) > 2
+
+
+def scrape_followers():
+    driver = init_driver()
+    wait = WebDriverWait(driver, 30)
+
+    print("Loading cookies")
+    load_facebook_cookies(driver, COOKIE_FILE)
+
+    driver.save_screenshot(os.path.join(OUTPUT_DIR, "after_login.png"))
+
+    if "login" in driver.current_url.lower():
+        raise Exception("Cookie login failed. Facebook redirected to login page.")
+
+    print("Login successful")
+
+    driver.get(START_URL)
+    time.sleep(5)
+
     try:
-        dialogs = driver.find_elements(By.XPATH, "//div[@role='dialog']")
-        if dialogs:
-            driver.execute_script(
-                "arguments[0].scrollTop = arguments[0].scrollHeight",
-                dialogs[0]
-            )
-            return True
+        followers_text = driver.find_element(
+            By.XPATH, "//span[contains(text(),'followers')]"
+        ).text
+        print(f"Followers shown by Facebook: {followers_text}")
     except Exception:
-        pass
-    return False
+        print("Could not read followers count")
 
+    wb, ws = init_excel()
 
-# ======================================================
-# COLLECT FOLLOWERS (RESUME SAFE)
-# ======================================================
-def collect_followers(driver, existing_profiles):
-    print("Opening followers page...")
-    driver.get(FOLLOWERS_URL)
-    time.sleep(8)
+    collected = set()
+    sno = 1
+    no_new_rounds = 0
+    MAX_NO_NEW = 15
 
-    collected = []
-    seen = set()
-    no_new = 0
+    print("Collecting followers")
 
-    while len(collected) < MAX_FOLLOWERS_PER_RUN and no_new < MAX_NO_NEW:
-        elements = driver.find_elements(
+    while no_new_rounds < MAX_NO_NEW:
+        found_this_round = 0
+
+        anchors = driver.find_elements(
             By.XPATH,
-            "//a[contains(@href,'facebook.com') and @role='link']"
+            "//div[@role='main']//a[contains(@href,'facebook.com') and .//span[@dir='auto']]"
         )
 
-        new_found = 0
-
-        for el in elements:
+        for a in anchors:
             try:
-                name = el.text.strip()
-                href = el.get_attribute("href")
+                name = normalize(a.text)
+                href = a.get_attribute("href")
 
-                if (
-                    is_valid_follower(name, href)
-                    and href not in seen
-                    and href not in existing_profiles
-                ):
-                    seen.add(href)
-                    collected.append((name, href))
-                    new_found += 1
-                    print(f"Collected {len(collected)}: {name}")
+                if not is_valid_name(name):
+                    continue
 
-                    if len(collected) >= MAX_FOLLOWERS_PER_RUN:
-                        break
+                if href in collected:
+                    continue
+
+                collected.add(href)
+
+                ws.append([sno, name, href])
+                print(f"Collected {sno}: {name}")
+
+                sno += 1
+                found_this_round += 1
 
             except StaleElementReferenceException:
                 continue
 
-        if new_found == 0:
-            no_new += 1
-            print(f"No new followers found ({no_new}/{MAX_NO_NEW})")
+        if found_this_round == 0:
+            no_new_rounds += 1
+            print(f"No new followers found ({no_new_rounds}/{MAX_NO_NEW})")
         else:
-            no_new = 0
+            no_new_rounds = 0
 
-        scrolled = scroll_followers_container(driver)
-        if not scrolled:
-            driver.execute_script(
-                "window.scrollTo({top: document.body.scrollHeight});"
-            )
+        driver.execute_script("window.scrollBy(0, 1600);")
+        time.sleep(2)
 
-        time.sleep(random.uniform(6, 9))
+    wb.save(EXCEL_FILE)
+    print(f"Excel saved at: {EXCEL_FILE}")
 
-    print(f"New followers collected this run: {len(collected)}")
-    return collected
+    driver.save_screenshot(os.path.join(OUTPUT_DIR, "before_close.png"))
 
-
-# ======================================================
-# EXTRACT CONTACT DETAILS
-# ======================================================
-def extract_contact_details(driver):
-    details = {
-        "Location": "",
-        "Phone": "",
-        "Email": "",
-        "Website": "",
-        "External Facebook": "",
-        "External LinkedIn": "",
-        "External Instagram": "",
-    }
-
-    time.sleep(3)
-
-    links = driver.find_elements(By.TAG_NAME, "a")
-    for link in links:
-        try:
-            href = link.get_attribute("href")
-            if not href:
-                continue
-
-            h = href.lower()
-            if "linkedin.com" in h:
-                details["External LinkedIn"] = href
-            elif "instagram.com" in h:
-                details["External Instagram"] = href
-            elif href.startswith("http") and details["Website"] == "":
-                details["Website"] = href
-
-        except StaleElementReferenceException:
-            continue
-
-    page = driver.page_source.lower()
-
-    phone = re.search(r"\+?\d[\d\s\-]{8,}", page)
-    email = re.search(
-        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}", page
-    )
-
-    if phone:
-        details["Phone"] = phone.group()
-    if email:
-        details["Email"] = email.group()
-
-    return details
-
-
-# ======================================================
-# SAVE / APPEND TO EXCEL
-# ======================================================
-def save_to_excel(data):
-    if os.path.exists(OUT_XLSX):
-        wb = load_workbook(OUT_XLSX)
-        ws = wb.active
-        start_row = ws.max_row + 1
-    else:
-        wb = Workbook()
-        ws = wb.active
-        ws.title = "Facebook Data"
-
-        bold = Font(bold=True)
-        for col, header in enumerate(HEADERS, start=1):
-            c = ws.cell(row=1, column=col, value=header)
-            c.font = bold
-
-        start_row = 2
-
-    for idx, row in enumerate(data, start=start_row):
-        ws.cell(row=idx, column=1, value=idx - 1)
-        for col, val in enumerate(row, start=2):
-            ws.cell(row=idx, column=col, value=val)
-
-    wb.save(OUT_XLSX)
-    print(f"Excel updated at: {os.path.abspath(OUT_XLSX)}")
-
-
-# ======================================================
-# MAIN
-# ======================================================
-def main():
-    driver, wait = setup_driver()
-
-    try:
-        facebook_login(driver, wait)
-
-        existing_profiles = load_existing_profiles()
-        new_followers = collect_followers(driver, existing_profiles)
-
-        final_data = []
-
-        for name, url in new_followers:
-            print(f"Extracting details for: {name}")
-            driver.get(url)
-            time.sleep(random.uniform(4, 6))
-
-            details = extract_contact_details(driver)
-
-            final_data.append([
-                name,
-                url,
-                details["Location"],
-                details["Phone"],
-                details["Email"],
-                details["Website"],
-                url,
-                details["External LinkedIn"],
-                details["External Instagram"],
-            ])
-
-        if final_data:
-            save_to_excel(final_data)
-        else:
-            print("No new data to append.")
-
-    finally:
-        try:
-            ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-            close_shot = os.path.join(
-                SCREENSHOT_DIR, f"before_close_{ts}.png"
-            )
-            driver.save_screenshot(close_shot)
-            print(f"Closing screenshot saved at: {os.path.abspath(close_shot)}")
-        except Exception as e:
-            print(f"Could not take closing screenshot: {e}")
-
-        print("Closing browser...")
-        driver.quit()
+    driver.quit()
+    print("Browser closed")
 
 
 if __name__ == "__main__":
-    main()
+    scrape_followers()

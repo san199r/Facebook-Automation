@@ -133,8 +133,8 @@ def scrape_page_about():
 
     bold = Font(bold=True)
     for i, h in enumerate(HEADERS, start=1):
-        c = ws.cell(1, i, h)
-        c.font = bold
+        cell = ws.cell(1, i, h)
+        cell.font = bold
 
     try:
         page_name = driver.find_element(By.XPATH, "//h1").text
@@ -160,7 +160,7 @@ def scrape_page_about():
     wb.save(EXCEL_FILE)
     driver.quit()
 
-    print(f"Data extracted successfully → {EXCEL_FILE}")
+    print("Data extracted successfully:", EXCEL_FILE)
 
 
 if __name__ == "__main__":

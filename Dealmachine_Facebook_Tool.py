@@ -1,17 +1,16 @@
-# =========================
-# Jenkins-safe Facebook Scraper
-# =========================
+# =========================================
+# Jenkins-safe Facebook Followers Scraper
+# Headless Chrome Enabled
+# =========================================
 
 import sys
-# Ensure UTF-8 output (still avoid emojis in logs)
 try:
-    sys.stdout.reconfigure(encoding='utf-8')
+    sys.stdout.reconfigure(encoding="utf-8")
 except Exception:
     pass
 
 import os
 import time
-import re
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -26,114 +25,123 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-# =========================
+# =========================================
 # CONFIG
-# =========================
-START_URL = "https://www.facebook.com/dealmachineapp/"
-OUT_XLSX = "facebook_dealmachine_results.xlsx"
-
-HEADERS = [
-    "S.No",
-    "Facebook Name",
-    "Profile URL"
-]
+# =========================================
+FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
+OUT_XLSX = "facebook_dealmachine_followers.xlsx"
+MAX_FOLLOWERS = 20   # increase if needed
 
 
-# =========================
-# UTILITIES
-# =========================
+# =========================================
+# SETUP DRIVER (HEADLESS)
+# =========================================
 def setup_driver():
     options = webdriver.ChromeOptions()
 
-    # Jenkins-friendly options
+    options.add_argument("--headless=new")
+    options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-infobars")
     options.add_argument("--disable-extensions")
-    options.add_argument("--start-maximized")
-
-    # Uncomment if Jenkins runs without desktop
-    # options.add_argument("--headless=new")
+    options.add_argument("--disable-gpu")
+    options.add_argument("--no-sandbox")
 
     service = ChromeService(ChromeDriverManager().install())
     driver = webdriver.Chrome(service=service, options=options)
 
-    wait = WebDriverWait(driver, 20)
+    wait = WebDriverWait(driver, 25)
     return driver, wait
 
 
+# =========================================
+# FACEBOOK LOGIN
+# =========================================
 def facebook_login(driver, wait):
     username = os.getenv("FB_USERNAME")
     password = os.getenv("FB_PASSWORD")
 
     if not username or not password:
-        print("WARNING: FB_USERNAME or FB_PASSWORD not set in environment.")
-        print("Skipping login.")
+        print("WARNING: FB_USERNAME or FB_PASSWORD not set.")
         return
 
     print(f"Logging in as: {username}")
 
     driver.get("https://www.facebook.com/login")
+    time.sleep(5)
 
-    email_input = wait.until(EC.presence_of_element_located((By.ID, "email")))
-    pass_input = wait.until(EC.presence_of_element_located((By.ID, "pass")))
+    email = wait.until(EC.presence_of_element_located((By.ID, "email")))
+    passwd = wait.until(EC.presence_of_element_located((By.ID, "pass")))
 
-    email_input.clear()
-    email_input.send_keys(username)
+    email.clear()
+    email.send_keys(username)
 
-    pass_input.clear()
-    pass_input.send_keys(password)
-    pass_input.send_keys(Keys.ENTER)
+    passwd.clear()
+    passwd.send_keys(password)
+    passwd.send_keys(Keys.ENTER)
 
-    # Wait for login to complete
+    time.sleep(10)
+    print("Login completed.")
+
+
+# =========================================
+# EXTRACT FOLLOWERS
+# =========================================
+def extract_followers(driver, limit):
+    print("Opening followers page...")
+    driver.get(FOLLOWERS_URL)
     time.sleep(8)
-    print("Login attempt completed.")
 
-
-def extract_profiles(driver, wait, limit=20):
-    print("Opening target page...")
-    driver.get(START_URL)
-    time.sleep(8)
-
-    results = []
+    followers = []
     seen = set()
 
-    print("Collecting profile links...")
+    last_height = driver.execute_script("return document.body.scrollHeight")
 
-    anchors = driver.find_elements(By.TAG_NAME, "a")
+    while len(followers) < limit:
+        links = driver.find_elements(By.XPATH, "//a[contains(@href,'facebook.com')]")
 
-    for a in anchors:
-        href = a.get_attribute("href")
-        text = a.text.strip()
+        for link in links:
+            name = link.text.strip()
+            href = link.get_attribute("href")
 
-        if not href or not text:
-            continue
-
-        if "facebook.com" in href and "profile" in href or "/people/" in href:
-            if href in seen:
+            if not name or not href:
                 continue
 
-            seen.add(href)
-            results.append((text, href))
+            if "/people/" in href and href not in seen:
+                seen.add(href)
+                followers.append((name, href))
 
-            if len(results) >= limit:
-                break
+                if len(followers) >= limit:
+                    break
 
-    print(f"Collected {len(results)} profiles.")
-    return results
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
+
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+    print(f"Collected {len(followers)} followers.")
+    return followers
 
 
+# =========================================
+# SAVE TO EXCEL
+# =========================================
 def save_to_excel(data):
-    print("Saving data to Excel...")
+    print("Saving followers to Excel...")
 
     wb = Workbook()
     ws = wb.active
-    ws.title = "Facebook Data"
+    ws.title = "Followers"
 
-    header_font = Font(bold=True)
+    headers = ["S.No", "Name", "Profile URL"]
+    bold = Font(bold=True)
 
-    for col, header in enumerate(HEADERS, start=1):
+    for col, header in enumerate(headers, start=1):
         cell = ws.cell(row=1, column=col, value=header)
-        cell.font = header_font
+        cell.font = bold
 
     for idx, (name, url) in enumerate(data, start=1):
         ws.cell(row=idx + 1, column=1, value=idx)
@@ -141,23 +149,23 @@ def save_to_excel(data):
         ws.cell(row=idx + 1, column=3, value=url)
 
     wb.save(OUT_XLSX)
-    print(f"Excel file saved: {OUT_XLSX}")
+    print(f"Excel saved: {OUT_XLSX}")
 
 
-# =========================
-# MAIN FLOW
-# =========================
-def facebook_dealmachine_scraper():
+# =========================================
+# MAIN
+# =========================================
+def main():
     driver, wait = setup_driver()
 
     try:
         facebook_login(driver, wait)
-        profiles = extract_profiles(driver, wait, limit=20)
+        followers = extract_followers(driver, MAX_FOLLOWERS)
 
-        if profiles:
-            save_to_excel(profiles)
+        if followers:
+            save_to_excel(followers)
         else:
-            print("No profiles found.")
+            print("No followers found.")
 
     finally:
         print("Closing browser...")
@@ -165,4 +173,4 @@ def facebook_dealmachine_scraper():
 
 
 if __name__ == "__main__":
-    facebook_dealmachine_scraper()
+    main()

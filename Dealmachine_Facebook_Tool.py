@@ -1,6 +1,6 @@
 # ======================================================
 # Jenkins-safe Facebook Followers Full Data Extractor
-# (StaleElementReferenceException FIXED)
+# Final Version with Excel Output Folder
 # ======================================================
 
 import sys
@@ -12,6 +12,7 @@ except Exception:
 import os
 import time
 import re
+from datetime import datetime
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -30,9 +31,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ======================================================
 # CONFIG
 # ======================================================
-FOLLOWERS_URL = "https://www.facebook.com/UseApolloIo/followers/"
-OUT_XLSX = "facebook_full_contact_data.xlsx"
-MAX_FOLLOWERS = 10
+FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
+MAX_FOLLOWERS = 10   # increase slowly (10 → 20 → 50)
 
 HEADERS = [
     "S.No",
@@ -46,6 +46,13 @@ HEADERS = [
     "External LinkedIn",
     "External Instagram",
 ]
+
+# Output folder (Jenkins workspace friendly)
+OUTPUT_DIR = os.path.join(os.getcwd(), "output")
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUT_XLSX = os.path.join(OUTPUT_DIR, f"facebook_full_contact_data_{timestamp}.xlsx")
 
 
 # ======================================================
@@ -97,7 +104,7 @@ def facebook_login(driver, wait):
 
 
 # ======================================================
-# EXTRACT CONTACT DETAILS
+# EXTRACT CONTACT DETAILS (BEST-EFFORT)
 # ======================================================
 def extract_contact_details(driver):
     details = {
@@ -157,13 +164,13 @@ def extract_followers_with_details(driver, limit):
     followers = []
     seen = set()
 
-    # STEP 1: collect raw data (NO WebElements later)
-    links = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
+    # STEP 1: collect profile URLs only
+    elements = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
 
-    for link in links:
+    for el in elements:
         try:
-            name = link.text.strip()
-            href = link.get_attribute("href")
+            name = el.text.strip()
+            href = el.get_attribute("href")
 
             if name and href and href not in seen:
                 followers.append((name, href))
@@ -177,7 +184,7 @@ def extract_followers_with_details(driver, limit):
 
     print(f"Found {len(followers)} follower profiles.")
 
-    # STEP 2: visit profiles safely
+    # STEP 2: open each profile safely
     data = []
 
     for name, profile_url in followers:
@@ -225,7 +232,7 @@ def save_to_excel(data):
             ws.cell(row=idx + 1, column=col, value=value)
 
     wb.save(OUT_XLSX)
-    print(f"Excel saved: {OUT_XLSX}")
+    print(f"Excel saved at: {os.path.abspath(OUT_XLSX)}")
 
 
 # ======================================================
@@ -250,4 +257,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

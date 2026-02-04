@@ -47,16 +47,32 @@ def normalize_ws(s: str) -> str:
 
 def init_driver():
     options = webdriver.ChromeOptions()
+    
+    # --- Jenkins/Headless Requirements ---
+    options.add_argument("--headless=new")           # Runs without a GUI
+    options.add_argument("--no-sandbox")              # Bypass OS security model (Required for Jenkins/Linux)
+    options.add_argument("--disable-dev-shm-usage")   # Overcomes limited resource problems in Docker/VMs
+    options.add_argument("--window-size=1920,1080")   # Sets a standard screen size for headless mode
+    
+    # --- Stealth & Anti-Detection ---
+    # Setting a real-looking User-Agent helps prevent immediate blocking by Facebook
+    user_agent = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36"
+    options.add_argument(f"user-agent={user_agent}")
+    
     options.add_argument("--disable-notifications")
-    options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    
+    # --- Automation Flag Removal ---
     options.add_experimental_option("excludeSwitches", ["enable-automation"])
     options.add_experimental_option("useAutomationExtension", False)
 
-    driver = webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=options
-    )
+    # Initialize Service and Driver
+    service = ChromeService(ChromeDriverManager().install())
+    driver = webdriver.Chrome(service=service, options=options)
+    
+    # Mask the 'navigator.webdriver' flag to further hide automation
+    driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+    
     driver.set_page_load_timeout(60)
     return driver
 
@@ -233,3 +249,4 @@ def facebook_dealmachine_scraper():
 
 if __name__ == "__main__":
     facebook_dealmachine_scraper()
+

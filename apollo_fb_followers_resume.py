@@ -30,6 +30,13 @@ HEADERS = [
     "S.No",
     "Facebook Name",
     "Facebook Page URL",
+    "Location",
+    "Phone",
+    "Email",
+    "Website",
+    "External Facebook",
+    "External LinkedIn",
+    "External Instagram",
 ]
 
 
@@ -95,14 +102,13 @@ def init_or_resume_excel():
         wb = load_workbook(EXCEL_FILE)
         ws = wb.active
 
-        max_row = ws.max_row
-        start_sno = max_row
+        start_sno = ws.max_row
 
         for row in ws.iter_rows(min_row=2, values_only=True):
             if row and row[2]:
                 collected_urls.add(row[2])
 
-        safe_print(f"Resuming Excel: {max_row - 1} records found")
+        safe_print(f"Resuming Excel with {len(collected_urls)} existing records")
 
     else:
         wb = Workbook()
@@ -176,7 +182,19 @@ def scrape_followers():
                     continue
 
                 collected.add(href)
-                ws.append([sno, name, href])
+
+                ws.append([
+                    sno,
+                    name,
+                    href,
+                    "",  # Location
+                    "",  # Phone
+                    "",  # Email
+                    "",  # Website
+                    "",  # External Facebook
+                    "",  # External LinkedIn
+                    "",  # External Instagram
+                ])
 
                 safe_print(f"Collected {sno}: {name}")
 
@@ -196,7 +214,7 @@ def scrape_followers():
         time.sleep(2)
 
     wb.save(EXCEL_FILE)
-    safe_print(f"Excel saved: {EXCEL_FILE}")
+    safe_print(f"Excel saved at: {EXCEL_FILE}")
 
     driver.quit()
     safe_print("Browser closed")

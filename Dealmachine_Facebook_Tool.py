@@ -1,6 +1,6 @@
 # ======================================================
-# Jenkins-safe Facebook Followers Full Data Extractor
-# With Total Followers Count + Continuous Scrolling
+# Facebook Followers Extractor – Container Scroll FIXED
+# Jenkins-safe | Robust scrolling | Full Excel output
 # ======================================================
 
 import sys
@@ -33,7 +33,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # CONFIG
 # ======================================================
 FOLLOWERS_URL = "https://www.facebook.com/dealmachineapp/followers/"
-MAX_FOLLOWERS = 200   # target number (best effort)
+MAX_FOLLOWERS = 50          # realistic target without blocks
+MAX_NO_NEW = 15             # patience level
 
 HEADERS = [
     "S.No",
@@ -52,15 +53,20 @@ OUTPUT_DIR = os.path.join(os.getcwd(), "output")
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 timestamp = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUT_XLSX = os.path.join(OUTPUT_DIR, f"facebook_full_contact_data_{timestamp}.xlsx")
+OUT_XLSX = os.path.join(
+    OUTPUT_DIR, f"facebook_full_contact_data_{timestamp}.xlsx"
+)
 
 
 # ======================================================
-# DRIVER SETUP (HEADLESS)
+# DRIVER SETUP
 # ======================================================
 def setup_driver():
     options = webdriver.ChromeOptions()
+
+    # NOTE: Comment headless if you want more followers
     options.add_argument("--headless=new")
+
     options.add_argument("--window-size=1920,1080")
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-infobars")
@@ -104,34 +110,101 @@ def facebook_login(driver, wait):
 
 
 # ======================================================
-# READ TOTAL FOLLOWERS COUNT
+# FOLLOWERS COUNT (DISPLAY)
 # ======================================================
 def get_total_followers_text(driver):
     time.sleep(4)
     spans = driver.find_elements(By.XPATH, "//span")
-
     for span in spans:
         text = span.text.lower().strip()
-        if "follower" in text:
+        if "followers" in text:
             return text
-
     return "Unknown"
 
 
-def normalize_follower_count(text):
+# ======================================================
+# SCROLL FOLLOWERS CONTAINER (CRITICAL FIX)
+# ======================================================
+def scroll_followers_container(driver):
     try:
-        text = text.replace("followers", "").strip()
-        if "k" in text:
-            return int(float(text.replace("k", "")) * 1000)
-        if "m" in text:
-            return int(float(text.replace("m", "")) * 1_000_000)
-        return int(text.replace(",", ""))
-    except:
-        return None
+        containers = driver.find_elements(By.XPATH, "//div[@role='dialog']")
+        if containers:
+            container = containers[0]
+            driver.execute_script(
+                "arguments[0].scrollTop = arguments[0].scrollHeight",
+                container
+            )
+            return True
+    except Exception:
+        pass
+    return False
 
 
 # ======================================================
-# EXTRACT CONTACT DETAILS (BEST EFFORT)
+# COLLECT FOLLOWERS (ROBUST)
+# ======================================================
+def collect_all_followers(driver):
+    print("Opening followers page...")
+    driver.get(FOLLOWERS_URL)
+    time.sleep(8)
+
+    followers_text = get_total_followers_text(driver)
+    print(f"Followers shown by Facebook: {followers_text}")
+
+    collected = []
+    seen = set()
+    no_new = 0
+
+    while len(collected) < MAX_FOLLOWERS and no_new < MAX_NO_NEW:
+        elements = driver.find_elements(
+            By.XPATH,
+            "//a[contains(@href,'facebook.com') and @role='link']"
+        )
+
+        new_found = 0
+
+        for el in elements:
+            try:
+                name = el.text.strip()
+                href = el.get_attribute("href")
+
+                if (
+                    name
+                    and href
+                    and "facebook.com" in href
+                    and href not in seen
+                ):
+                    seen.add(href)
+                    collected.append((name, href))
+                    new_found += 1
+                    print(f"Collected {len(collected)}: {name}")
+
+                    if len(collected) >= MAX_FOLLOWERS:
+                        break
+
+            except StaleElementReferenceException:
+                continue
+
+        if new_found == 0:
+            no_new += 1
+            print(f"No new followers found ({no_new}/{MAX_NO_NEW})")
+        else:
+            no_new = 0
+
+        scrolled = scroll_followers_container(driver)
+        if not scrolled:
+            driver.execute_script(
+                "window.scrollTo({top: document.body.scrollHeight});"
+            )
+
+        time.sleep(random.uniform(6, 9))
+
+    print(f"Total followers collected: {len(collected)}")
+    return collected
+
+
+# ======================================================
+# EXTRACT CONTACT DETAILS
 # ======================================================
 def extract_contact_details(driver):
     details = {
@@ -141,7 +214,7 @@ def extract_contact_details(driver):
         "Website": "",
         "External Facebook": "",
         "External LinkedIn": "",
-        "External Instagram": ""
+        "External Instagram": "",
     }
 
     time.sleep(3)
@@ -153,10 +226,10 @@ def extract_contact_details(driver):
             if not href:
                 continue
 
-            href_l = href.lower()
-            if "linkedin.com" in href_l:
+            h = href.lower()
+            if "linkedin.com" in h:
                 details["External LinkedIn"] = href
-            elif "instagram.com" in href_l:
+            elif "instagram.com" in h:
                 details["External Instagram"] = href
             elif href.startswith("http") and details["Website"] == "":
                 details["Website"] = href
@@ -164,76 +237,19 @@ def extract_contact_details(driver):
         except StaleElementReferenceException:
             continue
 
-    page_text = driver.page_source.lower()
+    page = driver.page_source.lower()
 
-    phone_match = re.search(r"\+?\d[\d\s\-]{8,}", page_text)
-    if phone_match:
-        details["Phone"] = phone_match.group()
-
-    email_match = re.search(
-        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}", page_text
+    phone = re.search(r"\+?\d[\d\s\-]{8,}", page)
+    email = re.search(
+        r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-z]{2,}", page
     )
-    if email_match:
-        details["Email"] = email_match.group()
+
+    if phone:
+        details["Phone"] = phone.group()
+    if email:
+        details["Email"] = email.group()
 
     return details
-
-
-# ======================================================
-# COLLECT ALL FOLLOWERS (ROBUST SCROLLING)
-# ======================================================
-def collect_all_followers(driver, max_followers):
-    print("Opening followers page...")
-    driver.get(FOLLOWERS_URL)
-    time.sleep(8)
-
-    followers_text = get_total_followers_text(driver)
-    est_count = normalize_follower_count(followers_text)
-
-    print(f"Followers shown by Facebook: {followers_text}")
-    if est_count:
-        print(f"Estimated followers count: {est_count}")
-
-    collected = []
-    seen = set()
-
-    no_new_attempts = 0
-    MAX_NO_NEW = 5
-
-    while len(collected) < max_followers and no_new_attempts < MAX_NO_NEW:
-        elements = driver.find_elements(By.XPATH, "//a[contains(@href,'/people/')]")
-        new_found = 0
-
-        for el in elements:
-            try:
-                name = el.text.strip()
-                href = el.get_attribute("href")
-
-                if name and href and href not in seen:
-                    seen.add(href)
-                    collected.append((name, href))
-                    new_found += 1
-                    print(f"Collected {len(collected)}: {name}")
-
-                    if len(collected) >= max_followers:
-                        break
-
-            except StaleElementReferenceException:
-                continue
-
-        if new_found == 0:
-            no_new_attempts += 1
-            print(f"No new followers found (attempt {no_new_attempts}/{MAX_NO_NEW})")
-        else:
-            no_new_attempts = 0
-
-        driver.execute_script(
-            "window.scrollTo({top: document.body.scrollHeight, behavior: 'smooth'});"
-        )
-        time.sleep(random.uniform(4, 6))
-
-    print(f"Total followers collected: {len(collected)}")
-    return collected
 
 
 # ======================================================
@@ -246,13 +262,13 @@ def save_to_excel(data):
 
     bold = Font(bold=True)
     for col, header in enumerate(HEADERS, start=1):
-        cell = ws.cell(row=1, column=col, value=header)
-        cell.font = bold
+        c = ws.cell(row=1, column=col, value=header)
+        c.font = bold
 
     for idx, row in enumerate(data, start=1):
         ws.cell(row=idx + 1, column=1, value=idx)
-        for col, value in enumerate(row, start=2):
-            ws.cell(row=idx + 1, column=col, value=value)
+        for col, val in enumerate(row, start=2):
+            ws.cell(row=idx + 1, column=col, value=val)
 
     wb.save(OUT_XLSX)
     print(f"Excel saved at: {os.path.abspath(OUT_XLSX)}")
@@ -266,28 +282,26 @@ def main():
 
     try:
         facebook_login(driver, wait)
-        followers = collect_all_followers(driver, MAX_FOLLOWERS)
+        followers = collect_all_followers(driver)
 
         final_data = []
-        for name, profile_url in followers:
+        for name, url in followers:
             print(f"Extracting details for: {name}")
-            driver.get(profile_url)
-            time.sleep(5)
+            driver.get(url)
+            time.sleep(random.uniform(4, 6))
 
             details = extract_contact_details(driver)
             final_data.append([
                 name,
-                profile_url,
+                url,
                 details["Location"],
                 details["Phone"],
                 details["Email"],
                 details["Website"],
-                profile_url,
+                url,
                 details["External LinkedIn"],
                 details["External Instagram"],
             ])
-
-            time.sleep(random.uniform(3, 5))
 
         if final_data:
             save_to_excel(final_data)

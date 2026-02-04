@@ -36,7 +36,6 @@ def normalize_ws(s: str) -> str:
 
 def init_driver():
     options = webdriver.ChromeOptions()
-    # Jenkins/Headless Requirements
     options.add_argument("--headless=new") 
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -44,13 +43,10 @@ def init_driver():
     
     # Anti-Bot measures
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36")
-    options.add_experimental_option("excludeSwitches", ["enable-automation"])
-    options.add_experimental_option("useAutomationExtension", False)
 
-    driver = webdriver.Chrome(
-        service=ChromeService(ChromeDriverManager().install()),
-        options=options
-    )
+    # In Selenium 4.10+, you don't need Service(ChromeDriverManager().install())
+    # Selenium Manager handles it automatically.
+    driver = webdriver.Chrome(options=options)
     return driver
 
 def facebook_login(driver, wait):
@@ -97,3 +93,4 @@ def facebook_dealmachine_scraper():
 
 if __name__ == "__main__":
     facebook_dealmachine_scraper()
+

@@ -16,7 +16,7 @@ from selenium.common.exceptions import StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-START_URL = "https://www.facebook.com/dealmachineapp/followers/"
+START_URL = "https://www.facebook.com/UseApolloIo/followers/"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
@@ -196,3 +196,4 @@ def scrape_followers():
 
 if __name__ == "__main__":
     scrape_followers()
+

@@ -1,23 +1,39 @@
 import os
-import re
 import time
+import re
 
-from openpyxl import load_workbook
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.common.exceptions import TimeoutException, StaleElementReferenceException
+from selenium.common.exceptions import StaleElementReferenceException
 
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
-EXCEL_FILE = os.path.join("output", "apollo_page_fb_followers.xlsx")
+PAGE_URL = "https://www.facebook.com/UseApolloIo/about"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
-SLEEP_BETWEEN_PROFILES = 6
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+EXCEL_FILE = os.path.join(
+    OUTPUT_DIR,
+    "apollo_facebook_page_about.xlsx"
+)
+
+HEADERS = [
+    "Page Name",
+    "Page URL",
+    "Website",
+    "Email",
+    "Phone",
+    "Instagram",
+    "LinkedIn",
+]
 
 
 # ================= DRIVER =================
@@ -71,108 +87,81 @@ def normalize(text):
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def extract_links(driver):
-    """
-    Jenkins-safe link extraction.
-    All stale elements are ignored.
-    """
-    result = {
-        "website": "",
-        "fb": "",
-        "linkedin": "",
-        "instagram": "",
-    }
-
+def find_text_by_label(driver, label):
     try:
-        anchors = driver.find_elements(By.XPATH, "//a[@href]")
-    except Exception:
-        return result
-
-    for a in anchors:
-        try:
-            href = a.get_attribute("href")
-            if not href:
-                continue
-
-            if not result["linkedin"] and "linkedin.com" in href:
-                result["linkedin"] = href
-            elif not result["instagram"] and "instagram.com" in href:
-                result["instagram"] = href
-            elif not result["website"] and href.startswith("http") and "facebook.com" not in href:
-                result["website"] = href
-            elif not result["fb"] and "facebook.com" in href:
-                result["fb"] = href
-
-        except StaleElementReferenceException:
-            continue
-        except Exception:
-            continue
-
-    return result
-
-
-def extract_location(driver):
-    try:
-        loc = driver.find_element(By.XPATH, "//span[contains(text(),'Lives in')]")
-        return normalize(loc.text)
-    except Exception:
+        el = driver.find_element(
+            By.XPATH,
+            f"//span[text()='{label}']/ancestor::div[1]//span[last()]"
+        )
+        return normalize(el.text)
+    except:
         return ""
 
 
+def find_social_links(driver):
+    links = {"instagram": "", "linkedin": ""}
+
+    try:
+        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+    except:
+        return links
+
+    for a in anchors:
+        try:
+            href = a.get_attribute("href") or ""
+            if not links["instagram"] and "instagram.com" in href:
+                links["instagram"] = href
+            elif not links["linkedin"] and "linkedin.com" in href:
+                links["linkedin"] = href
+        except StaleElementReferenceException:
+            continue
+
+    return links
+
+
 # ================= MAIN =================
-def enrich_profiles():
-    if not os.path.exists(EXCEL_FILE):
-        raise Exception("Excel file not found")
-
-    wb = load_workbook(EXCEL_FILE)
-    ws = wb.active
-
+def scrape_page_about():
     driver = init_driver()
-    wait = WebDriverWait(driver, 20)
-
     load_facebook_cookies(driver)
 
-    for row in range(2, ws.max_row + 1):
-        profile_url = ws.cell(row, 3).value
-        website_existing = ws.cell(row, 7).value
+    driver.get(PAGE_URL)
+    time.sleep(5)
 
-        if not profile_url:
-            continue
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Page About"
 
-        # Skip already enriched rows
-        if website_existing:
-            continue
+    bold = Font(bold=True)
+    for i, h in enumerate(HEADERS, start=1):
+        c = ws.cell(1, i, h)
+        c.font = bold
 
-        print(f"Enriching row {row}: {profile_url}")
+    try:
+        page_name = driver.find_element(By.XPATH, "//h1").text
+    except:
+        page_name = "Unknown"
 
-        try:
-            driver.get(profile_url)
-            time.sleep(5)  # Jenkins-safe delay
+    website = find_text_by_label(driver, "Website")
+    email = find_text_by_label(driver, "Email")
+    phone = find_text_by_label(driver, "Phone")
 
-            links = extract_links(driver)
-            location = extract_location(driver)
+    socials = find_social_links(driver)
 
-            ws.cell(row, 4).value = location
-            ws.cell(row, 7).value = links["website"]
-            ws.cell(row, 8).value = links["fb"]
-            ws.cell(row, 9).value = links["linkedin"]
-            ws.cell(row, 10).value = links["instagram"]
+    ws.append([
+        page_name,
+        PAGE_URL.replace("/about", ""),
+        website,
+        email,
+        phone,
+        socials["instagram"],
+        socials["linkedin"],
+    ])
 
-            wb.save(EXCEL_FILE)
-
-            time.sleep(SLEEP_BETWEEN_PROFILES)
-
-        except TimeoutException:
-            print(f"Timeout while loading {profile_url}")
-            continue
-        except Exception as e:
-            print(f"Error on row {row}: {e}")
-            continue
-
-    driver.quit()
     wb.save(EXCEL_FILE)
-    print("Profile enrichment completed successfully")
+    driver.quit()
+
+    print(f"Data extracted successfully → {EXCEL_FILE}")
 
 
 if __name__ == "__main__":
-    enrich_profiles()
+    scrape_page_about()

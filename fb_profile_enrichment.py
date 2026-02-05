@@ -13,6 +13,20 @@ from selenium.common.exceptions import TimeoutException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
+# ================= SAFE PRINT =================
+def safe_print(text):
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="ignore").decode())
+
+
+def clean_text(text):
+    if not text:
+        return ""
+    return text.encode("utf-8", errors="ignore").decode("utf-8")
+
+
 # ================= CONFIG =================
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
@@ -46,13 +60,11 @@ def get_latest_followers_excel():
     ]
 
     if not files:
-        raise FileNotFoundError(
-            "No facebook_followers_*.xlsx found in output folder"
-        )
+        raise FileNotFoundError("No facebook_followers_*.xlsx found in output folder")
 
     files.sort(reverse=True)
     latest = os.path.join(OUTPUT_DIR, files[0])
-    print(f"Using input Excel: {latest}")
+    safe_print(f"Using input Excel: {latest}")
     return latest
 
 
@@ -132,18 +144,18 @@ def extract_links(driver):
         if not href:
             continue
 
-        href_l = href.lower()
+        h = href.lower()
 
-        if "youtube.com" in href_l and not links["youtube"]:
+        if "youtube.com" in h and not links["youtube"]:
             links["youtube"] = href
-        elif "instagram.com" in href_l and not links["instagram"]:
+        elif "instagram.com" in h and not links["instagram"]:
             links["instagram"] = href
-        elif "linkedin.com" in href_l and not links["linkedin"]:
+        elif "linkedin.com" in h and not links["linkedin"]:
             links["linkedin"] = href
-        elif ("twitter.com" in href_l or "x.com" in href_l) and not links["twitter"]:
+        elif ("twitter.com" in h or "x.com" in h) and not links["twitter"]:
             links["twitter"] = href
         elif (
-            "facebook.com" not in href_l
+            "facebook.com" not in h
             and not links["website"]
             and re.match(r"https?://", href)
         ):
@@ -176,13 +188,13 @@ def enrich_profiles():
     out_wb, out_ws = init_output_excel()
 
     for row in range(2, input_ws.max_row + 1):
-        name = input_ws.cell(row, 2).value
+        name = clean_text(input_ws.cell(row, 2).value)
         profile_url = input_ws.cell(row, 3).value
 
         if not profile_url:
             continue
 
-        print(f"Processing: {name}")
+        safe_print(f"Processing: {name}")
 
         try:
             driver.get(profile_url)
@@ -191,9 +203,9 @@ def enrich_profiles():
             driver.get(profile_url.rstrip("/") + "/about")
             time.sleep(4)
 
-            address = extract_value_by_label(driver, "Address")
-            email = extract_value_by_label(driver, "Email")
-            phone = extract_value_by_label(driver, "Phone")
+            address = clean_text(extract_value_by_label(driver, "Address"))
+            email = clean_text(extract_value_by_label(driver, "Email"))
+            phone = clean_text(extract_value_by_label(driver, "Phone"))
 
             links = extract_links(driver)
 
@@ -211,13 +223,14 @@ def enrich_profiles():
             ])
 
         except TimeoutException:
-            print(f"Timeout: {profile_url}")
+            safe_print(f"Timeout: {profile_url}")
             continue
 
     out_wb.save(OUTPUT_EXCEL)
-    print(f"Output saved at: {OUTPUT_EXCEL}")
+    safe_print(f"Output saved at: {OUTPUT_EXCEL}")
 
     driver.quit()
+    safe_print("Browser closed")
 
 
 # ================= RUN =================

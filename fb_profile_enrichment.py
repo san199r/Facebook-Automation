@@ -9,15 +9,11 @@ from openpyxl.styles import Font
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from selenium.common.exceptions import TimeoutException
-
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
-INPUT_EXCEL = os.path.join("input", "facebook_followers.xlsx")
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -40,6 +36,27 @@ HEADERS = [
     "LinkedIn",
     "Twitter"
 ]
+
+
+# ================= INPUT EXCEL (AUTO) =================
+def get_latest_followers_excel():
+    files = [
+        f for f in os.listdir(OUTPUT_DIR)
+        if f.startswith("facebook_followers_") and f.endswith(".xlsx")
+    ]
+
+    if not files:
+        raise FileNotFoundError(
+            "No facebook_followers_*.xlsx found in output folder"
+        )
+
+    files.sort(reverse=True)
+    latest = os.path.join(OUTPUT_DIR, files[0])
+    print(f"Using input Excel: {latest}")
+    return latest
+
+
+INPUT_EXCEL = get_latest_followers_excel()
 
 
 # ================= DRIVER =================
@@ -99,7 +116,7 @@ def init_output_excel():
     return wb, ws
 
 
-# ================= SCRAPE HELPERS =================
+# ================= HELPERS =================
 def extract_links(driver):
     links = {
         "youtube": "",
@@ -115,22 +132,27 @@ def extract_links(driver):
         if not href:
             continue
 
-        if "youtube.com" in href and not links["youtube"]:
+        href_l = href.lower()
+
+        if "youtube.com" in href_l and not links["youtube"]:
             links["youtube"] = href
-        elif "instagram.com" in href and not links["instagram"]:
+        elif "instagram.com" in href_l and not links["instagram"]:
             links["instagram"] = href
-        elif "linkedin.com" in href and not links["linkedin"]:
+        elif "linkedin.com" in href_l and not links["linkedin"]:
             links["linkedin"] = href
-        elif ("twitter.com" in href or "x.com" in href) and not links["twitter"]:
+        elif ("twitter.com" in href_l or "x.com" in href_l) and not links["twitter"]:
             links["twitter"] = href
-        elif not links["website"] and re.match(r"https?://", href):
-            if "facebook.com" not in href:
-                links["website"] = href
+        elif (
+            "facebook.com" not in href_l
+            and not links["website"]
+            and re.match(r"https?://", href)
+        ):
+            links["website"] = href
 
     return links
 
 
-def extract_text_by_label(driver, label):
+def extract_value_by_label(driver, label):
     try:
         return driver.find_element(
             By.XPATH,
@@ -143,8 +165,6 @@ def extract_text_by_label(driver, label):
 # ================= MAIN =================
 def enrich_profiles():
     driver = init_driver()
-    wait = WebDriverWait(driver, 20)
-
     load_facebook_cookies(driver)
 
     if "login" in driver.current_url.lower():
@@ -154,7 +174,6 @@ def enrich_profiles():
     input_ws = input_wb.active
 
     out_wb, out_ws = init_output_excel()
-    out_row = 2
 
     for row in range(2, input_ws.max_row + 1):
         name = input_ws.cell(row, 2).value
@@ -165,33 +184,35 @@ def enrich_profiles():
 
         print(f"Processing: {name}")
 
-        driver.get(profile_url)
-        time.sleep(5)
+        try:
+            driver.get(profile_url)
+            time.sleep(4)
 
-        # Open About page
-        driver.get(profile_url.rstrip("/") + "/about")
-        time.sleep(5)
+            driver.get(profile_url.rstrip("/") + "/about")
+            time.sleep(4)
 
-        address = extract_text_by_label(driver, "Address")
-        email = extract_text_by_label(driver, "Email")
-        phone = extract_text_by_label(driver, "Phone")
+            address = extract_value_by_label(driver, "Address")
+            email = extract_value_by_label(driver, "Email")
+            phone = extract_value_by_label(driver, "Phone")
 
-        links = extract_links(driver)
+            links = extract_links(driver)
 
-        out_ws.append([
-            name,
-            profile_url,
-            address,
-            email,
-            phone,
-            links["youtube"],
-            links["instagram"],
-            links["website"],
-            links["linkedin"],
-            links["twitter"]
-        ])
+            out_ws.append([
+                name,
+                profile_url,
+                address,
+                email,
+                phone,
+                links["youtube"],
+                links["instagram"],
+                links["website"],
+                links["linkedin"],
+                links["twitter"]
+            ])
 
-        out_row += 1
+        except TimeoutException:
+            print(f"Timeout: {profile_url}")
+            continue
 
     out_wb.save(OUTPUT_EXCEL)
     print(f"Output saved at: {OUTPUT_EXCEL}")
@@ -199,5 +220,6 @@ def enrich_profiles():
     driver.quit()
 
 
+# ================= RUN =================
 if __name__ == "__main__":
     enrich_profiles()

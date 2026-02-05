@@ -24,7 +24,7 @@ def safe_print(text):
 def clean_text(text):
     if not text:
         return ""
-    return text.encode("utf-8", errors="ignore").decode("utf-8")
+    return str(text).strip()
 
 
 # ================= CONFIG =================
@@ -52,14 +52,14 @@ HEADERS = [
 ]
 
 
-# ================= INPUT EXCEL (AUTO) =================
+# ================= INPUT EXCEL =================
 def get_latest_followers_excel():
     files = [
         f for f in os.listdir(OUTPUT_DIR)
         if f.startswith("facebook_followers_") and f.endswith(".xlsx")
     ]
     if not files:
-        raise FileNotFoundError("No facebook_followers_*.xlsx found in output folder")
+        raise FileNotFoundError("No facebook_followers_*.xlsx found")
 
     files.sort(reverse=True)
     latest = os.path.join(OUTPUT_DIR, files[0])
@@ -111,6 +111,9 @@ def load_facebook_cookies(driver):
     driver.refresh()
     time.sleep(5)
 
+    if "login" in driver.current_url.lower() or "checkpoint" in driver.current_url.lower():
+        safe_print("⚠ Facebook session warning, continuing anyway")
+
 
 # ================= EXCEL =================
 def init_output_excel():
@@ -126,9 +129,8 @@ def init_output_excel():
     return wb, ws
 
 
-# ================= ABOUT + SCROLL =================
+# ================= ABOUT PAGE =================
 def open_about_and_scroll(driver):
-    # Try clicking About tab
     try:
         about_btn = driver.find_element(
             By.XPATH,
@@ -137,42 +139,55 @@ def open_about_and_scroll(driver):
         driver.execute_script("arguments[0].click();", about_btn)
         time.sleep(4)
     except Exception:
-        # Fallback to direct URL
         driver.get(driver.current_url.rstrip("/") + "/about")
         time.sleep(4)
 
-    # Scroll to load all sections
-    last_height = driver.execute_script("return document.body.scrollHeight")
     for _ in range(8):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
 
 
 # ================= CONTACT EXTRACTION =================
 def extract_contact_info(driver):
     data = {"email": "", "phone": "", "address": ""}
 
-    blocks = driver.find_elements(By.XPATH, "//div[@role='main']//div")
+    blocks = driver.find_elements(
+        By.XPATH,
+        "//div[@role='main']//span | //div[@role='main']//div"
+    )
+
     for b in blocks:
-        t = b.text
-        tl = t.lower()
+        raw = b.text.strip()
+        if not raw:
+            continue
 
-        if not data["email"]:
-            m = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", t)
-            if m:
-                data["email"] = m.group(0)
+        for t in raw.split("\n"):
+            tl = t.lower()
 
-        if not data["phone"]:
-            m = re.search(r"\+?\d[\d\s\-]{7,}", t)
-            if m:
-                data["phone"] = m.group(0)
+            if not data["email"]:
+                m = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", t)
+                if m:
+                    data["email"] = m.group(0)
+                    continue
 
-        if not data["address"] and "address" in tl:
-            data["address"] = t.replace("Address", "").strip()
+            if not data["phone"]:
+                m = re.search(r"\+?\d[\d\s\-]{7,}", t)
+                if m:
+                    data["phone"] = m.group(0)
+                    continue
+
+            if (
+                not data["address"]
+                and len(t) > 10
+                and not "@" in t
+                and not t.startswith("http")
+            ):
+                if any(x in tl for x in [
+                    "street", "road", "suite", "city", "state",
+                    "district", "bangladesh", "india",
+                    "united", "california", "san francisco"
+                ]):
+                    data["address"] = t.strip()
 
     return data
 
@@ -218,9 +233,6 @@ def enrich_profiles():
     driver = init_driver()
     load_facebook_cookies(driver)
 
-    if "login" in driver.current_url.lower():
-        raise Exception("Cookie login failed")
-
     input_wb = load_workbook(INPUT_EXCEL)
     input_ws = input_wb.active
 
@@ -230,10 +242,10 @@ def enrich_profiles():
         name = clean_text(input_ws.cell(row, 2).value)
         profile_url = input_ws.cell(row, 3).value
 
+        safe_print(f"[ROW {row}] {name} -> {profile_url}")
+
         if not profile_url:
             continue
-
-        safe_print(f"Processing: {name}")
 
         try:
             driver.get(profile_url)
@@ -247,9 +259,9 @@ def enrich_profiles():
             out_ws.append([
                 name,
                 profile_url,
-                clean_text(contact["address"]),
-                clean_text(contact["email"]),
-                clean_text(contact["phone"]),
+                contact["address"],
+                contact["email"],
+                contact["phone"],
                 links["youtube"],
                 links["instagram"],
                 links["website"],
@@ -257,15 +269,13 @@ def enrich_profiles():
                 links["twitter"]
             ])
 
-        except TimeoutException:
-            safe_print(f"Timeout: {profile_url}")
-            continue
-        except Exception:
-            safe_print(f"Skipped: {profile_url}")
-            continue
+        except TimeoutException as e:
+            safe_print(f"⏱ Timeout: {e}")
+        except Exception as e:
+            safe_print(f"❌ Error: {e}")
 
     out_wb.save(OUTPUT_EXCEL)
-    safe_print(f"Output saved at: {OUTPUT_EXCEL}")
+    safe_print(f"✅ Output saved: {OUTPUT_EXCEL}")
 
     driver.quit()
     safe_print("Browser closed")

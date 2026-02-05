@@ -58,7 +58,6 @@ def get_latest_followers_excel():
         f for f in os.listdir(OUTPUT_DIR)
         if f.startswith("facebook_followers_") and f.endswith(".xlsx")
     ]
-
     if not files:
         raise FileNotFoundError("No facebook_followers_*.xlsx found in output folder")
 
@@ -104,7 +103,6 @@ def load_facebook_cookies(driver):
                 "domain": domain,
                 "path": path
             }
-
             if expiry.isdigit():
                 cookie["expiry"] = int(expiry)
 
@@ -128,7 +126,58 @@ def init_output_excel():
     return wb, ws
 
 
-# ================= HELPERS =================
+# ================= ABOUT + SCROLL =================
+def open_about_and_scroll(driver):
+    # Try clicking About tab
+    try:
+        about_btn = driver.find_element(
+            By.XPATH,
+            "//a[contains(@href,'/about') or .//span[normalize-space()='About']]"
+        )
+        driver.execute_script("arguments[0].click();", about_btn)
+        time.sleep(4)
+    except Exception:
+        # Fallback to direct URL
+        driver.get(driver.current_url.rstrip("/") + "/about")
+        time.sleep(4)
+
+    # Scroll to load all sections
+    last_height = driver.execute_script("return document.body.scrollHeight")
+    for _ in range(8):
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(2)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+
+# ================= CONTACT EXTRACTION =================
+def extract_contact_info(driver):
+    data = {"email": "", "phone": "", "address": ""}
+
+    blocks = driver.find_elements(By.XPATH, "//div[@role='main']//div")
+    for b in blocks:
+        t = b.text
+        tl = t.lower()
+
+        if not data["email"]:
+            m = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", t)
+            if m:
+                data["email"] = m.group(0)
+
+        if not data["phone"]:
+            m = re.search(r"\+?\d[\d\s\-]{7,}", t)
+            if m:
+                data["phone"] = m.group(0)
+
+        if not data["address"] and "address" in tl:
+            data["address"] = t.replace("Address", "").strip()
+
+    return data
+
+
+# ================= LINK EXTRACTION =================
 def extract_links(driver):
     links = {
         "youtube": "",
@@ -155,23 +204,13 @@ def extract_links(driver):
         elif ("twitter.com" in h or "x.com" in h) and not links["twitter"]:
             links["twitter"] = href
         elif (
-            "facebook.com" not in h
-            and not links["website"]
-            and re.match(r"https?://", href)
+            not links["website"]
+            and "facebook.com" not in h
+            and not any(s in h for s in ["youtube", "instagram", "linkedin", "twitter", "x.com"])
         ):
             links["website"] = href
 
     return links
-
-
-def extract_value_by_label(driver, label):
-    try:
-        return driver.find_element(
-            By.XPATH,
-            f"//span[contains(text(),'{label}')]/following::span[1]"
-        ).text.strip()
-    except Exception:
-        return ""
 
 
 # ================= MAIN =================
@@ -200,21 +239,17 @@ def enrich_profiles():
             driver.get(profile_url)
             time.sleep(4)
 
-            driver.get(profile_url.rstrip("/") + "/about")
-            time.sleep(4)
+            open_about_and_scroll(driver)
 
-            address = clean_text(extract_value_by_label(driver, "Address"))
-            email = clean_text(extract_value_by_label(driver, "Email"))
-            phone = clean_text(extract_value_by_label(driver, "Phone"))
-
+            contact = extract_contact_info(driver)
             links = extract_links(driver)
 
             out_ws.append([
                 name,
                 profile_url,
-                address,
-                email,
-                phone,
+                clean_text(contact["address"]),
+                clean_text(contact["email"]),
+                clean_text(contact["phone"]),
                 links["youtube"],
                 links["instagram"],
                 links["website"],
@@ -224,6 +259,9 @@ def enrich_profiles():
 
         except TimeoutException:
             safe_print(f"Timeout: {profile_url}")
+            continue
+        except Exception:
+            safe_print(f"Skipped: {profile_url}")
             continue
 
     out_wb.save(OUTPUT_EXCEL)

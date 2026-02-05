@@ -18,6 +18,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 START_URL = "https://www.facebook.com/UseApolloIo/followers/"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
+
 OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
@@ -26,14 +27,9 @@ EXCEL_FILE = os.path.join(
     f"facebook_followers_{datetime.now().strftime('%Y%m%d_%H%M%S')}.xlsx"
 )
 
-HEADERS = [
-    "S.No",
-    "Facebook Name",
-    "Facebook Page URL",
-]
+HEADERS = ["S.No", "Facebook Name", "Facebook Profile URL"]
 
 
-# ================= SAFE PRINT =================
 def safe_print(text):
     try:
         print(text)
@@ -41,7 +37,6 @@ def safe_print(text):
         print(text.encode("ascii", errors="ignore").decode())
 
 
-# ================= DRIVER =================
 def init_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
@@ -56,12 +51,11 @@ def init_driver():
     return driver
 
 
-# ================= COOKIES =================
-def load_facebook_cookies(driver, cookie_file):
+def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
     time.sleep(3)
 
-    with open(cookie_file, "r", encoding="utf-8") as f:
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
         for line in f:
             if line.startswith("#") or not line.strip():
                 continue
@@ -84,58 +78,90 @@ def load_facebook_cookies(driver, cookie_file):
     time.sleep(5)
 
 
-# ================= EXCEL =================
 def init_excel():
     wb = Workbook()
     ws = wb.active
     ws.title = "Followers"
 
     bold = Font(bold=True)
-    for c, h in enumerate(HEADERS, start=1):
-        cell = ws.cell(1, c, h)
+    for i, h in enumerate(HEADERS, start=1):
+        cell = ws.cell(1, i, h)
         cell.font = bold
 
     return wb, ws
 
 
-# ================= HELPERS =================
 def normalize(text):
     return re.sub(r"\s+", " ", (text or "").strip())
 
 
-def is_valid_name(name):
-    bad = {
-        "followers", "following", "about", "mentions", "reviews",
-        "reels", "photos", "home", "friends", "messages"
+def is_real_follower(name, href):
+    if not name or not href:
+        return False
+
+    name = name.strip().lower()
+
+    blocked_names = {
+        "sign up", "live", "followers", "following", "home",
+        "about", "photos", "videos", "reels"
     }
-    return name and name.lower() not in bad and len(name) > 2
+    if name in blocked_names:
+        return False
+
+    if "l.facebook.com" in href:
+        return False
+
+    if not href.startswith("https://www.facebook.com/"):
+        return False
+
+    blocked_paths = [
+        "/live",
+        "/live_videos",
+        "/watch",
+        "/signup",
+        "/pages",
+        "/events",
+        "/ads"
+    ]
+    if any(p in href for p in blocked_paths):
+        return False
+
+    return True
 
 
-# ================= MAIN =================
+def is_person_profile(href):
+    if "profile.php?id=" in href:
+        return True
+
+    blocked = [
+        "/pages/",
+        "/business/",
+        "/company/",
+        "/brand/",
+        "/services/",
+        "/shop/",
+        "/store/"
+    ]
+    if any(b in href.lower() for b in blocked):
+        return False
+
+    return True
+
+
 def scrape_followers():
     driver = init_driver()
     wait = WebDriverWait(driver, 30)
 
     safe_print("Loading cookies")
-    load_facebook_cookies(driver, COOKIE_FILE)
-
-    driver.save_screenshot(os.path.join(OUTPUT_DIR, "after_login.png"))
+    load_facebook_cookies(driver)
 
     if "login" in driver.current_url.lower():
-        raise Exception("Cookie login failed. Facebook redirected to login page.")
+        raise Exception("Cookie login failed")
 
     safe_print("Login successful")
 
     driver.get(START_URL)
     time.sleep(5)
-
-    try:
-        followers_text = driver.find_element(
-            By.XPATH, "//span[contains(text(),'followers')]"
-        ).text
-        safe_print(f"Followers shown by Facebook: {followers_text}")
-    except Exception:
-        safe_print("Could not read followers count")
 
     wb, ws = init_excel()
 
@@ -159,14 +185,16 @@ def scrape_followers():
                 name = normalize(a.text)
                 href = a.get_attribute("href")
 
-                if not is_valid_name(name):
+                if not is_real_follower(name, href):
+                    continue
+
+                if not is_person_profile(href):
                     continue
 
                 if href in collected:
                     continue
 
                 collected.add(href)
-
                 ws.append([sno, name, href])
                 safe_print(f"Collected {sno}: {name}")
 
@@ -178,17 +206,15 @@ def scrape_followers():
 
         if found_this_round == 0:
             no_new_rounds += 1
-            safe_print(f"No new followers found ({no_new_rounds}/{MAX_NO_NEW})")
+            safe_print(f"No new followers ({no_new_rounds}/{MAX_NO_NEW})")
         else:
             no_new_rounds = 0
 
-        driver.execute_script("window.scrollBy(0, 1600);")
-        time.sleep(2)
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
 
     wb.save(EXCEL_FILE)
     safe_print(f"Excel saved at: {EXCEL_FILE}")
-
-    driver.save_screenshot(os.path.join(OUTPUT_DIR, "before_close.png"))
 
     driver.quit()
     safe_print("Browser closed")
@@ -196,4 +222,3 @@ def scrape_followers():
 
 if __name__ == "__main__":
     scrape_followers()
-

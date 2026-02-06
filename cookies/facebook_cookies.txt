@@ -7,9 +7,9 @@
 .facebook.com	TRUE	/	TRUE	1770700448	locale	en_GB
 .facebook.com	TRUE	/	TRUE	1804655650	ps_l	1
 .facebook.com	TRUE	/	TRUE	1804655650	ps_n	1
-.facebook.com	TRUE	/	TRUE	1801915687	c_user	61583603570495
+.facebook.com	TRUE	/	TRUE	1801919316	c_user	61583603570495
 .facebook.com	TRUE	/	TRUE	1770975899	wd	1366x633
 .facebook.com	TRUE	/	TRUE	0	ar_debug	1
 .facebook.com	TRUE	/	TRUE	0	presence	C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1770371099104%2C%22v%22%3A1%7D
-.facebook.com	TRUE	/	TRUE	1778155687	fr	1WDcOujKiT70SZCYg.AWfWvaTt2yVl0O2y6ZcVyOCf49oxs2QEumT75v0nBoZTdSahUno.Bphdml..AAA.0.0.Bphdml.AWcBEONK_FJqdvGN2JgDJ9xNCEQ
-.facebook.com	TRUE	/	TRUE	1801915687	xs	10%3AzB71pah8mjXH8w%3A2%3A1770196028%3A-1%3A-1%3A%3AAcyJqxvBIb2kD9dgGi9DF5lCD5ZZM_P1i1o2OWeM_5o
+.facebook.com	TRUE	/	TRUE	1778159316	fr	1vy2pYm2SnyiZYs9t.AWcmMnooysA4LnliQQedpqLgDgkNmDn5Tc0QbBbOLlrq3AAOmzs.BphefR..AAA.0.0.BphefR.AWd9VgzrBjQTmEgQiyQNVb6gCxQ
+.facebook.com	TRUE	/	TRUE	1801919316	xs	10%3AzB71pah8mjXH8w%3A2%3A1770196028%3A-1%3A-1%3A%3AAcwgtdq24nKopLvpC3oyqWIDhNfQam8UceIyX0SQOyI

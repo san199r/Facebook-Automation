@@ -29,7 +29,7 @@ OUTPUT_EXCEL = os.path.join(
 )
 
 
-# ================= DRIVER (JENKINS SAFE) =================
+# ================= DRIVER =================
 def init_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
@@ -46,9 +46,8 @@ def init_driver():
     return driver
 
 
-# ================= LOAD FACEBOOK COOKIES =================
+# ================= COOKIES =================
 def load_facebook_cookies(driver):
-    print("Loading Facebook cookies...")
     driver.get("https://www.facebook.com/")
     time.sleep(5)
 
@@ -92,36 +91,38 @@ def init_excel():
     return wb, ws
 
 
-# ================= COLLECT REAL POST URLS =================
+# ================= POST EXTRACTION (FIXED) =================
 def collect_post_urls(driver, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
         print(f"Scrolling {i + 1}/{scrolls}")
 
-        anchors = driver.find_elements(By.XPATH, "//a[@href]")
-        for a in anchors:
-            href = a.get_attribute("href")
-            if not href:
+        articles = driver.find_elements(By.XPATH, "//div[@role='article']")
+
+        for article in articles:
+            try:
+                links = article.find_elements(By.XPATH, ".//a[@href]")
+                for a in links:
+                    href = a.get_attribute("href")
+                    if not href:
+                        continue
+
+                    clean = href.split("?")[0]
+
+                    if (
+                        "facebook.com" in clean
+                        and "/search/" not in clean
+                        and (
+                            "/posts/" in clean
+                            or "permalink.php" in clean
+                            or "story_fbid=" in clean
+                        )
+                    ):
+                        post_urls.add(clean)
+                        break  # one post URL per article
+            except Exception:
                 continue
-
-            clean = href.split("?")[0]
-
-            # ❌ skip search & language URLs
-            if "/search/" in clean:
-                continue
-
-            # ✅ real Facebook post URLs only
-            if (
-                "facebook.com" in clean
-                and (
-                    "/posts/" in clean
-                    or "permalink.php" in clean
-                    or "story_fbid=" in clean
-                    or ("/groups/" in clean and "/posts/" in clean)
-                )
-            ):
-                post_urls.add(clean)
 
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(5)
@@ -132,10 +133,9 @@ def collect_post_urls(driver, scrolls=12):
 # ================= MAIN =================
 def run():
     driver = init_driver()
-
     load_facebook_cookies(driver)
 
-    print("Opening Facebook post search page...")
+    print("Opening Facebook search...")
     driver.get(SEARCH_URL)
     time.sleep(10)
 

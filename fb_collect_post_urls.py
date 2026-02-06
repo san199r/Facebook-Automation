@@ -87,24 +87,39 @@ def init_excel():
     return wb, ws
 
 
-# ================= COLLECT POSTS =================
-def collect_post_urls(driver, scrolls=8):
+# ================= POST URL COLLECTION =================
+def collect_post_urls(driver, scrolls=10):
     post_urls = set()
 
     for i in range(scrolls):
-        links = driver.find_elements(By.XPATH, "//a[@href]")
-        for a in links:
-            href = a.get_attribute("href")
-            if not href:
+        print(f"Scrolling {i + 1}/{scrolls}")
+
+        articles = driver.find_elements(By.XPATH, "//div[@role='article']")
+
+        for article in articles:
+            try:
+                links = article.find_elements(By.XPATH, ".//a[@href]")
+            except Exception:
                 continue
 
-            if (
-                "/posts/" in href
-                or "/permalink/" in href
-                or "story_fbid=" in href
-            ):
-                clean = href.split("?")[0]
-                post_urls.add(clean)
+            for a in links:
+                href = a.get_attribute("href")
+                if not href:
+                    continue
+
+                if (
+                    "facebook.com" in href
+                    and "search/posts" not in href
+                    and "groups" not in href
+                    and "pages" not in href
+                    and (
+                        "story_fbid=" in href
+                        or "/posts/" in href
+                        or "/permalink/" in href
+                    )
+                ):
+                    clean_url = href.split("?")[0]
+                    post_urls.add(clean_url)
 
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(4)
@@ -119,18 +134,18 @@ def run():
     print("Loading Facebook cookies...")
     load_facebook_cookies(driver)
 
-    print("Opening post search page...")
+    print("Opening posts search page...")
     driver.get(SEARCH_URL)
     time.sleep(8)
 
-    # Screenshot after search load
+    # Screenshot after search
     search_shot = os.path.join(
         SCREENSHOT_DIR,
         f"after_search_{datetime.now().strftime('%H%M%S')}.png"
     )
     driver.save_screenshot(search_shot)
 
-    print("Scrolling and collecting post URLs...")
+    print("Collecting post URLs...")
     post_urls = collect_post_urls(driver, scrolls=10)
 
     wb, ws = init_excel()
@@ -139,8 +154,9 @@ def run():
         ws.append([idx, url])
 
     wb.save(OUTPUT_EXCEL)
-    print(f"Saved {len(post_urls)} post URLs")
-    print(f"Excel file: {OUTPUT_EXCEL}")
+
+    print(f"Total posts collected: {len(post_urls)}")
+    print(f"Saved Excel: {OUTPUT_EXCEL}")
 
     # Screenshot before close
     close_shot = os.path.join(

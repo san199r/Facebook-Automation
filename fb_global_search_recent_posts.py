@@ -4,12 +4,10 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-SEARCH_URL = "https://www.facebook.com/search/top?q=probate"
+SEARCH_URL = "https://www.facebook.com/search/posts/?q=probate"
 KEYWORD = "probate"
 
 
@@ -23,46 +21,17 @@ driver = webdriver.Chrome(
     options=options
 )
 
-wait = WebDriverWait(driver, 30)
 
-
-# ---------------- OPEN SEARCH PAGE ----------------
-print("Opening Facebook global search...")
+# ---------------- OPEN RECENT POSTS SEARCH ----------------
+print("Opening Facebook RECENT POSTS search...")
 driver.get(SEARCH_URL)
-time.sleep(8)
+time.sleep(10)
 
 
-# ---------------- CLICK 'RECENT POSTS' TOGGLE ----------------
-print("Trying to enable 'Recent posts' filter...")
+# ---------------- SCROLL TO LOAD POSTS ----------------
+print("Scrolling to load posts...")
 
-try:
-    recent_toggle = wait.until(
-        EC.element_to_be_clickable((
-            By.XPATH,
-            "//span[text()='Recent posts']/ancestor::label//input"
-        ))
-    )
-
-    # Toggle only if not already enabled
-    if not recent_toggle.is_selected():
-        driver.execute_script("arguments[0].click();", recent_toggle)
-        print("Recent posts filter enabled")
-    else:
-        print("Recent posts filter already enabled")
-
-    time.sleep(6)
-
-except Exception as e:
-    print("Recent posts toggle not found or not clickable")
-    print(e)
-    driver.quit()
-    exit(1)
-
-
-# ---------------- SCROLL SEARCH RESULTS ----------------
-print("Scrolling search results...")
-
-for _ in range(5):
+for _ in range(6):
     driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
     time.sleep(4)
 
@@ -81,7 +50,7 @@ for p in posts:
     if link and link not in post_links:
         post_links.append(link)
 
-print(f"Total posts collected: {len(post_links)}")
+print(f"Total posts found: {len(post_links)}")
 
 
 # ---------------- OPEN POSTS & READ COMMENTS ----------------
@@ -122,6 +91,6 @@ for post_url in post_links[:5]:
             continue
 
 
-print("\nProcess finished. Browser will stay open for 15 seconds.")
+print("\nProcess completed. Browser stays open for 15 seconds.")
 time.sleep(15)
 driver.quit()

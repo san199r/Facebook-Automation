@@ -15,8 +15,6 @@ from webdriver_manager.chrome import ChromeDriverManager
 KEYWORD = "probate"
 SEARCH_URL = f"https://www.facebook.com/search/posts/?q={KEYWORD}"
 
-COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
-
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
 
@@ -30,47 +28,26 @@ OUTPUT_EXCEL = os.path.join(
 )
 
 
-# ================= DRIVER =================
+# ================= DRIVER (REAL CHROME PROFILE) =================
 def init_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
     options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
 
+    # USE REAL CHROME PROFILE (STEP 5)
+    options.add_argument(
+        r"--user-data-dir=C:\Users\Dell\AppData\Local\Google\Chrome\User Data"
+    )
+    options.add_argument("--profile-directory=fb_profile")
+
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
     )
+
     driver.set_page_load_timeout(60)
     return driver
-
-
-# ================= COOKIES LOGIN =================
-def load_facebook_cookies(driver):
-    driver.get("https://www.facebook.com/")
-    time.sleep(4)
-
-    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
-        for line in f:
-            if line.startswith("#") or not line.strip():
-                continue
-
-            domain, flag, path, secure, expiry, name, value = line.strip().split("\t")
-
-            cookie = {
-                "name": name,
-                "value": value,
-                "domain": domain,
-                "path": path
-            }
-
-            if expiry.isdigit():
-                cookie["expiry"] = int(expiry)
-
-            driver.add_cookie(cookie)
-
-    driver.refresh()
-    time.sleep(8)
 
 
 # ================= EXCEL =================
@@ -111,10 +88,11 @@ def collect_post_urls(driver, scrolls=12):
                     or "/permalink.php" in href
                 )
             ):
-                clean = href.split("?")[0]
-                post_urls.add(clean)
+                post_urls.add(href.split("?")[0])
 
-        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
+        driver.execute_script(
+            "window.scrollTo(0, document.body.scrollHeight);"
+        )
         time.sleep(5)
 
     return post_urls
@@ -124,10 +102,7 @@ def collect_post_urls(driver, scrolls=12):
 def run():
     driver = init_driver()
 
-    print("Loading Facebook cookies...")
-    load_facebook_cookies(driver)
-
-    print("Opening posts search...")
+    print("Opening Facebook posts search...")
     driver.get(SEARCH_URL)
     time.sleep(10)
 

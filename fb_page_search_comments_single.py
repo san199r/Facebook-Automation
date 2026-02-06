@@ -2,25 +2,18 @@ import time
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-# ================= CONFIG =================
-PAGE_URL = (
-    "https://www.facebook.com/dealmachineapp/"
-    "?utm_medium=email&_hsenc=p2ANqtz--ZUfZ03S_Qyri5dpkHIvi3hX506Su0Fp28rXBKllY7GszqkDm99A8oWHw6DFqMIIOKcU747uCmaFw9uOJXtJNaDBKCyQ"
-    "&_hsmi=249715428&utm_content=249715428&utm_source=hs_email"
-)
-
+PAGE_BASE = "https://www.facebook.com/dealmachineapp"
 KEYWORD = "probate"
 
+SEARCH_URL = f"{PAGE_BASE}/search/?q={KEYWORD}"
 
-# ================= DRIVER SETUP =================
+
+# ---------------- DRIVER SETUP ----------------
 options = Options()
 options.add_argument("--disable-notifications")
 options.add_argument("--start-maximized")
@@ -30,59 +23,15 @@ driver = webdriver.Chrome(
     options=options
 )
 
-wait = WebDriverWait(driver, 30)
+
+# ---------------- OPEN PAGE SEARCH DIRECTLY ----------------
+print("Opening page search URL...")
+driver.get(SEARCH_URL)
+time.sleep(10)
 
 
-# ================= OPEN PAGE =================
-print("Opening Facebook page...")
-driver.get(PAGE_URL)
-time.sleep(8)
-
-
-# ================= CLICK SEARCH (YOUR XPATH) =================
-print("Clicking Search using provided XPath...")
-
-try:
-    search_button = wait.until(
-        EC.element_to_be_clickable(
-            (By.XPATH, "//div/div[2]//span[text()='Search']")
-        )
-    )
-    search_button.click()
-    time.sleep(3)
-    print("Search button clicked")
-
-except Exception as e:
-    print("Search button NOT found using provided XPath")
-    print(e)
-    driver.quit()
-    exit(1)
-
-
-# ================= ENTER KEYWORD =================
-print("Entering keyword:", KEYWORD)
-
-try:
-    search_input = wait.until(
-        EC.presence_of_element_located(
-            (By.XPATH, "//input[@aria-label='Search this Page']")
-        )
-    )
-
-    search_input.clear()
-    search_input.send_keys(KEYWORD)
-    search_input.send_keys(Keys.ENTER)
-    time.sleep(8)
-
-except Exception as e:
-    print("Search input not found")
-    print(e)
-    driver.quit()
-    exit(1)
-
-
-# ================= COLLECT POST LINKS =================
-print("Collecting post links...")
+# ---------------- FIND POSTS ----------------
+print("Finding posts from search results...")
 
 posts = driver.find_elements(
     By.XPATH,
@@ -95,10 +44,10 @@ for p in posts:
     if link and link not in post_links:
         post_links.append(link)
 
-print("Posts found:", len(post_links))
+print(f"Posts found: {len(post_links)}")
 
 
-# ================= PROCESS POSTS =================
+# ---------------- OPEN POSTS & READ COMMENTS ----------------
 for post_url in post_links[:5]:
     print("\nOpening post:", post_url)
     driver.get(post_url)
@@ -113,7 +62,7 @@ for post_url in post_links[:5]:
         "//div[@aria-label='Comment']"
     )
 
-    print("Comments found:", len(comments))
+    print(f"Comments found: {len(comments)}")
 
     for c in comments:
         try:
@@ -136,6 +85,6 @@ for post_url in post_links[:5]:
             continue
 
 
-print("\nTest finished. Browser will stay open for 15 seconds.")
+print("\nProcess complete. Browser stays open for 15 seconds.")
 time.sleep(15)
 driver.quit()

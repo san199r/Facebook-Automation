@@ -10,11 +10,17 @@ from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-PAGE_URL = "https://www.facebook.com/dealmachineapp/"
+# ================= CONFIG =================
+PAGE_URL = (
+    "https://www.facebook.com/dealmachineapp/"
+    "?utm_medium=email&_hsenc=p2ANqtz--ZUfZ03S_Qyri5dpkHIvi3hX506Su0Fp28rXBKllY7GszqkDm99A8oWHw6DFqMIIOKcU747uCmaFw9uOJXtJNaDBKCyQ"
+    "&_hsmi=249715428&utm_content=249715428&utm_source=hs_email"
+)
+
 KEYWORD = "probate"
 
 
-# ---------------- DRIVER SETUP ----------------
+# ================= DRIVER SETUP =================
 options = Options()
 options.add_argument("--disable-notifications")
 options.add_argument("--start-maximized")
@@ -27,13 +33,13 @@ driver = webdriver.Chrome(
 wait = WebDriverWait(driver, 30)
 
 
-# ---------------- OPEN PAGE ----------------
+# ================= OPEN PAGE =================
 print("Opening Facebook page...")
 driver.get(PAGE_URL)
 time.sleep(8)
 
 
-# ---------------- CLICK SEARCH (YOUR XPATH) ----------------
+# ================= CLICK SEARCH (YOUR XPATH) =================
 print("Clicking Search using provided XPath...")
 
 try:
@@ -53,7 +59,7 @@ except Exception as e:
     exit(1)
 
 
-# ---------------- ENTER KEYWORD ----------------
+# ================= ENTER KEYWORD =================
 print("Entering keyword:", KEYWORD)
 
 try:
@@ -75,7 +81,7 @@ except Exception as e:
     exit(1)
 
 
-# ---------------- COLLECT POST LINKS ----------------
+# ================= COLLECT POST LINKS =================
 print("Collecting post links...")
 
 posts = driver.find_elements(
@@ -92,7 +98,7 @@ for p in posts:
 print("Posts found:", len(post_links))
 
 
-# ---------------- PROCESS POSTS ----------------
+# ================= PROCESS POSTS =================
 for post_url in post_links[:5]:
     print("\nOpening post:", post_url)
     driver.get(post_url)

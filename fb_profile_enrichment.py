@@ -2,6 +2,7 @@ import os
 import time
 import re
 from datetime import datetime
+from urllib.parse import unquote, urlparse, parse_qs
 
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font
@@ -62,7 +63,7 @@ def get_latest_followers_excel():
         if f.startswith("facebook_followers_") and f.endswith(".xlsx")
     ]
     if not files:
-        raise FileNotFoundError("No facebook_followers_*.xlsx found in output folder")
+        raise FileNotFoundError("No facebook_followers_*.xlsx found")
 
     files.sort(reverse=True)
     latest = os.path.join(OUTPUT_DIR, files[0])
@@ -73,7 +74,7 @@ def get_latest_followers_excel():
 INPUT_EXCEL = get_latest_followers_excel()
 
 
-# ================= RETRY HELPER =================
+# ================= RETRY =================
 def retry(action, retries=3, wait=1):
     for _ in range(retries):
         try:
@@ -124,9 +125,6 @@ def load_facebook_cookies(driver):
     driver.refresh()
     time.sleep(5)
 
-    if "login" in driver.current_url.lower() or "checkpoint" in driver.current_url.lower():
-        safe_print("⚠ Facebook session warning (checkpoint/login detected)")
-
 
 # ================= OUTPUT EXCEL =================
 def init_output_excel():
@@ -136,16 +134,14 @@ def init_output_excel():
 
     bold = Font(bold=True)
     for col, h in enumerate(HEADERS, start=1):
-        cell = ws.cell(1, col, h)
-        cell.font = bold
+        ws.cell(1, col, h).font = bold
 
     return wb, ws
 
 
-# ================= ABOUT PAGE =================
+# ================= ABOUT =================
 def open_about_and_scroll(driver):
     try:
-        time.sleep(2)
         retry(lambda: driver.find_element(
             By.XPATH,
             "//a[contains(@href,'/about') or .//span[normalize-space()='About']]"
@@ -155,13 +151,12 @@ def open_about_and_scroll(driver):
         driver.get(driver.current_url.rstrip("/") + "/about")
         time.sleep(3)
 
-    # Gentle scrolling to avoid DOM rebuild
     for _ in range(5):
-        driver.execute_script("window.scrollBy(0, 700)")
+        driver.execute_script("window.scrollBy(0,700)")
         time.sleep(1.5)
 
 
-# ================= CONTACT EXTRACTION =================
+# ================= CONTACT =================
 def extract_contact_info(driver):
     data = {"email": "", "phone": "", "address": ""}
 
@@ -179,9 +174,6 @@ def extract_contact_info(driver):
         except StaleElementReferenceException:
             continue
 
-        if not raw:
-            continue
-
         for t in raw.split("\n"):
             tl = t.lower()
 
@@ -189,13 +181,11 @@ def extract_contact_info(driver):
                 m = re.search(r"[a-zA-Z0-9._%+-]+@[a-zA-Z0-9.-]+\.[a-zA-Z]{2,}", t)
                 if m:
                     data["email"] = m.group(0)
-                    continue
 
             if not data["phone"]:
                 m = re.search(r"\+?\d[\d\s\-]{7,}", t)
                 if m:
                     data["phone"] = m.group(0)
-                    continue
 
             if (
                 not data["address"]
@@ -203,17 +193,13 @@ def extract_contact_info(driver):
                 and "@" not in t
                 and not t.startswith("http")
             ):
-                if any(x in tl for x in [
-                    "street", "road", "suite", "city", "state",
-                    "district", "india", "bangladesh",
-                    "united", "california"
-                ]):
+                if any(x in tl for x in ["street", "road", "city", "state", "india", "bangladesh"]):
                     data["address"] = t.strip()
 
     return data
 
 
-# ================= LINK EXTRACTION =================
+# ================= LINKS (MENTIONS REMOVED) =================
 def extract_links(driver):
     links = {
         "youtube": "",
@@ -224,7 +210,7 @@ def extract_links(driver):
     }
 
     try:
-        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+        anchors = driver.find_elements(By.XPATH, "//div[@role='main']//a[@href]")
     except StaleElementReferenceException:
         return links
 
@@ -234,25 +220,32 @@ def extract_links(driver):
         except StaleElementReferenceException:
             continue
 
-        if not href:
+        if not href or "/mentions" in href.lower():
             continue
 
-        h = href.lower()
+        final_url = href
+
+        if "l.facebook.com/l.php" in href:
+            qs = parse_qs(urlparse(href).query)
+            if "u" in qs:
+                final_url = unquote(qs["u"][0])
+
+        h = final_url.lower()
 
         if "youtube.com" in h and not links["youtube"]:
-            links["youtube"] = href
+            links["youtube"] = final_url
         elif "instagram.com" in h and not links["instagram"]:
-            links["instagram"] = href
+            links["instagram"] = final_url
         elif "linkedin.com" in h and not links["linkedin"]:
-            links["linkedin"] = href
+            links["linkedin"] = final_url
         elif ("twitter.com" in h or "x.com" in h) and not links["twitter"]:
-            links["twitter"] = href
+            links["twitter"] = final_url
         elif (
             not links["website"]
             and "facebook.com" not in h
             and not any(s in h for s in ["youtube", "instagram", "linkedin", "twitter", "x.com"])
         ):
-            links["website"] = href
+            links["website"] = final_url
 
     return links
 
@@ -262,19 +255,20 @@ def enrich_profiles():
     driver = init_driver()
     load_facebook_cookies(driver)
 
-    input_wb = load_workbook(INPUT_EXCEL)
-    input_ws = input_wb.active
+    in_wb = load_workbook(INPUT_EXCEL)
+    in_ws = in_wb.active
 
     out_wb, out_ws = init_output_excel()
 
-    for row in range(2, input_ws.max_row + 1):
-        name = clean_text(input_ws.cell(row, 2).value)
-        profile_url = input_ws.cell(row, 3).value
+    for row in range(2, in_ws.max_row + 1):
+        name = clean_text(in_ws.cell(row, 2).value)
+        profile_url = in_ws.cell(row, 3).value
+
+        if not profile_url or "/mentions" in profile_url.lower():
+            safe_print(f"[SKIPPED MENTIONS] {profile_url}")
+            continue
 
         safe_print(f"[ROW {row}] {name} -> {profile_url}")
-
-        if not profile_url:
-            continue
 
         try:
             driver.get(profile_url)
@@ -298,8 +292,6 @@ def enrich_profiles():
                 links["twitter"]
             ])
 
-        except TimeoutException as e:
-            safe_print(f"[TIMEOUT ROW {row}] {e}")
         except Exception as e:
             safe_print(f"[SKIPPED ROW {row}] {e}")
 
@@ -307,7 +299,6 @@ def enrich_profiles():
     safe_print(f"✅ Output saved: {OUTPUT_EXCEL}")
 
     driver.quit()
-    safe_print("Browser closed")
 
 
 # ================= RUN =================

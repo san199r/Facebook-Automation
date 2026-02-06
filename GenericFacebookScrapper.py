@@ -1,3 +1,5 @@
+# save as facebook_followers_scraper.py
+
 import os
 import re
 import time
@@ -10,7 +12,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.common.exceptions import StaleElementReferenceException
-
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -22,7 +23,6 @@ OUTPUT_DIR = "output"
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 
-# Derive Excel name safely from URL
 def get_safe_filename(url):
     parsed = urlparse(url)
     name = parsed.path.strip("/").replace("/", "_")
@@ -41,12 +41,24 @@ HEADERS = [
 ]
 
 
-# ================= SAFE PRINT =================
+# ================= UTILS =================
 def safe_print(text):
     try:
         print(text)
     except UnicodeEncodeError:
         print(text.encode("ascii", errors="ignore").decode())
+
+
+def normalize(text):
+    return re.sub(r"\s+", " ", (text or "").strip())
+
+
+def is_valid_name(name):
+    bad = {
+        "followers", "following", "about", "mentions",
+        "reviews", "reels", "photos", "home"
+    }
+    return name and name.lower() not in bad and len(name) > 2
 
 
 # ================= DRIVER =================
@@ -95,19 +107,6 @@ def load_facebook_cookies(driver):
     time.sleep(5)
 
 
-# ================= HELPERS =================
-def normalize(text):
-    return re.sub(r"\s+", " ", (text or "").strip())
-
-
-def is_valid_name(name):
-    bad = {
-        "followers", "following", "about", "mentions",
-        "reviews", "reels", "photos", "home"
-    }
-    return name and name.lower() not in bad and len(name) > 2
-
-
 # ================= EXCEL =================
 def init_or_resume_excel():
     collected = set()
@@ -122,7 +121,6 @@ def init_or_resume_excel():
                 collected.add(row[2])
 
         safe_print(f"Resuming with {len(collected)} followers")
-
     else:
         wb = Workbook()
         ws = wb.active
@@ -144,7 +142,7 @@ def scrape_followers():
     load_facebook_cookies(driver)
 
     if "login" in driver.current_url.lower():
-        raise Exception("Cookie login failed")
+        raise Exception("❌ Cookie login failed")
 
     driver.get(START_URL)
     time.sleep(5)
@@ -153,15 +151,17 @@ def scrape_followers():
 
     no_new_rounds = 0
     MAX_NO_NEW = 15
+    last_height = 0
 
-    safe_print("Collecting followers")
+    safe_print("Collecting followers...")
 
     while no_new_rounds < MAX_NO_NEW:
         found = 0
 
         anchors = driver.find_elements(
             By.XPATH,
-            "//div[@role='main']//a[contains(@href,'/profile.php') or contains(@href,'/people/')]"
+            "//a[contains(@href,'facebook.com') and "
+            "(contains(@href,'/profile.php') or contains(@href,'/people/'))]"
         )
 
         for a in anchors:
@@ -171,12 +171,12 @@ def scrape_followers():
 
                 if not is_valid_name(name):
                     continue
-                if href in collected:
+                if not href or href in collected:
                     continue
 
                 collected.add(href)
                 ws.append([sno, name, href])
-                safe_print(f"Collected {sno}")
+                safe_print(f"Collected {sno}: {name}")
 
                 sno += 1
                 found += 1
@@ -189,12 +189,17 @@ def scrape_followers():
         else:
             no_new_rounds = 0
 
-        driver.execute_script("window.scrollBy(0, 1600);")
+        driver.execute_script("window.scrollBy(0, 800);")
         time.sleep(2)
+
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            no_new_rounds += 1
+        last_height = new_height
 
     wb.save(EXCEL_FILE)
     driver.quit()
-    safe_print(f"Followers scraping completed: {EXCEL_FILE}")
+    safe_print(f"✅ Followers scraping completed: {EXCEL_FILE}")
 
 
 if __name__ == "__main__":

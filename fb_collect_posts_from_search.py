@@ -15,6 +15,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 KEYWORD = "probate"
 SEARCH_URL = f"https://www.facebook.com/search/posts/?q={KEYWORD}"
 
+COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
+
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
 
@@ -22,13 +24,12 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-
 OUTPUT_EXCEL = os.path.join(
     OUTPUT_DIR, f"facebook_posts_{KEYWORD}_{TIMESTAMP}.xlsx"
 )
 
 
-# ================= DRIVER (REAL PROFILE) =================
+# ================= DRIVER (JENKINS SAFE) =================
 def init_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
@@ -36,12 +37,6 @@ def init_driver():
     options.add_argument("--start-maximized")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-
-    # YOUR WORKING PROFILE
-    options.add_argument(
-        r"--user-data-dir=C:\Users\Dell\AppData\Local\Google\Chrome\User Data"
-    )
-    options.add_argument("--profile-directory=Profile 6")
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -51,6 +46,38 @@ def init_driver():
     return driver
 
 
+# ================= LOAD FACEBOOK COOKIES =================
+def load_facebook_cookies(driver):
+    print("Loading Facebook cookies...")
+    driver.get("https://www.facebook.com/")
+    time.sleep(5)
+
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+
+            domain, flag, path, secure, expiry, name, value = line.strip().split("\t")
+
+            cookie = {
+                "name": name,
+                "value": value,
+                "domain": domain,
+                "path": path
+            }
+
+            if expiry.isdigit():
+                cookie["expiry"] = int(expiry)
+
+            try:
+                driver.add_cookie(cookie)
+            except Exception:
+                pass
+
+    driver.refresh()
+    time.sleep(8)
+
+
 # ================= EXCEL =================
 def init_excel():
     wb = Workbook()
@@ -58,43 +85,45 @@ def init_excel():
     ws.title = "Post URLs"
 
     bold = Font(bold=True)
-    ws.cell(1, 1, "S.No").font = bold
-    ws.cell(1, 2, "Post URL").font = bold
+    ws.append(["S.No", "Post URL"])
+    ws["A1"].font = bold
+    ws["B1"].font = bold
 
     return wb, ws
 
 
-# ================= COLLECT POSTS WHILE SEARCHING =================
-def collect_posts_from_search(driver, scrolls=10):
+# ================= COLLECT REAL POST URLS =================
+def collect_post_urls(driver, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
         print(f"Scrolling {i + 1}/{scrolls}")
 
-        # Timestamp links inside posts
-        time_links = driver.find_elements(
-            By.XPATH,
-            "//a[contains(@href,'/posts/') or contains(@href,'permalink.php') or contains(@href,'story_fbid=')]"
-        )
-
-        for a in time_links:
-            try:
-                href = a.get_attribute("href")
-                if not href:
-                    continue
-
-                clean = href.split("?")[0]
-
-                # Extra safety: ignore search URLs
-                if "/search/" in clean:
-                    continue
-
-                post_urls.add(clean)
-
-            except Exception:
+        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+        for a in anchors:
+            href = a.get_attribute("href")
+            if not href:
                 continue
 
-        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
+            clean = href.split("?")[0]
+
+            # ❌ skip search & language URLs
+            if "/search/" in clean:
+                continue
+
+            # ✅ real Facebook post URLs only
+            if (
+                "facebook.com" in clean
+                and (
+                    "/posts/" in clean
+                    or "permalink.php" in clean
+                    or "story_fbid=" in clean
+                    or ("/groups/" in clean and "/posts/" in clean)
+                )
+            ):
+                post_urls.add(clean)
+
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(5)
 
     return post_urls
@@ -104,16 +133,18 @@ def collect_posts_from_search(driver, scrolls=10):
 def run():
     driver = init_driver()
 
-    print("Opening Facebook post search...")
+    load_facebook_cookies(driver)
+
+    print("Opening Facebook post search page...")
     driver.get(SEARCH_URL)
-    time.sleep(12)
+    time.sleep(10)
 
     driver.save_screenshot(
         os.path.join(SCREENSHOT_DIR, f"after_search_{TIMESTAMP}.png")
     )
 
-    print("Collecting post URLs from visible posts...")
-    post_urls = collect_posts_from_search(driver)
+    print("Collecting post URLs...")
+    post_urls = collect_post_urls(driver)
 
     wb, ws = init_excel()
     for idx, url in enumerate(sorted(post_urls), start=1):

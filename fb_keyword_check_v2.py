@@ -1,17 +1,25 @@
 import time
+import os
 import pandas as pd
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
 INPUT_EXCEL = "UseApolloIo_followers.xlsx"
 KEYWORD = "probate"
-OUTPUT_EXCEL = "UseApolloIo_keyword_check_v2.xlsx"
+
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+
+OUTPUT_EXCEL = os.path.join(
+    OUTPUT_DIR,
+    "fb_probate_comments.xlsx"
+)
 
 
 # ================= READ EXCEL =================
@@ -26,7 +34,7 @@ for col in df.columns:
 if not url_column:
     raise Exception("❌ Facebook URL column not found in Excel")
 
-print(f"✅ Facebook URL column detected: {url_column}")
+print(f"✅ Using URL column: {url_column}")
 
 
 # ================= DRIVER SETUP =================
@@ -40,67 +48,61 @@ driver = webdriver.Chrome(
 )
 
 
-def smart_scroll(max_scrolls=8):
-    last_height = driver.execute_script("return document.body.scrollHeight")
-    for _ in range(max_scrolls):
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+def smart_scroll(times=6):
+    for _ in range(times):
+        driver.execute_script(
+            "window.scrollTo(0, document.body.scrollHeight);"
+        )
         time.sleep(3)
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
-            break
-        last_height = new_height
 
 
 # ================= MAIN LOGIC =================
 results = []
 
-for idx, row in df.iterrows():
-    url = str(row[url_column]).strip()
-    print(f"\n🔍 [{idx+1}] Opening: {url}")
+for index, row in df.iterrows():
+    page_url = str(row[url_column]).strip()
+    print(f"\n🔍 Opening: {page_url}")
 
-    if not url.startswith("http"):
-        results.append({
-            "Facebook URL": url,
-            "Keyword": KEYWORD,
-            "Found": "INVALID URL",
-            "Snippet": ""
-        })
+    if not page_url.startswith("http"):
         continue
 
     try:
-        driver.get(url)
+        driver.get(page_url)
         time.sleep(6)
-
         smart_scroll()
 
-        body_text = driver.find_element(By.TAG_NAME, "body").text
-        body_text_lower = body_text.lower()
+        comments = driver.find_elements(
+            By.XPATH,
+            "//div[@aria-label='Comment']"
+        )
 
-        if KEYWORD in body_text_lower:
-            pos = body_text_lower.find(KEYWORD)
-            snippet = body_text[max(0, pos - 60): pos + 60]
-            found = "YES"
-            print("✅ Keyword FOUND")
-        else:
-            snippet = ""
-            found = "NO"
-            print("❌ Keyword NOT found")
+        for comment in comments:
+            try:
+                text = comment.text.strip()
 
-        results.append({
-            "Facebook URL": url,
-            "Keyword": KEYWORD,
-            "Found": found,
-            "Snippet": snippet
-        })
+                if KEYWORD.lower() not in text.lower():
+                    continue
+
+                user = comment.find_element(
+                    By.XPATH,
+                    ".//a[contains(@href,'facebook.com')]"
+                )
+
+                results.append({
+                    "Page URL": page_url,
+                    "Keyword": KEYWORD,
+                    "Comment Text": text,
+                    "Commenter Name": user.text,
+                    "Commenter Profile URL": user.get_attribute("href")
+                })
+
+                print(f"✔ Found keyword comment by: {user.text}")
+
+            except Exception:
+                continue
 
     except Exception as e:
         print("⚠ Error:", e)
-        results.append({
-            "Facebook URL": url,
-            "Keyword": KEYWORD,
-            "Found": "ERROR",
-            "Snippet": ""
-        })
 
 
 # ================= SAVE OUTPUT =================
@@ -109,4 +111,4 @@ out_df.to_excel(OUTPUT_EXCEL, index=False)
 
 driver.quit()
 
-print(f"\n✅ Output saved successfully: {OUTPUT_EXCEL}")
+print(f"\n✅ Output saved at: {OUTPUT_EXCEL}")

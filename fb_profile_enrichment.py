@@ -9,7 +9,10 @@ from openpyxl.styles import Font
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import (
+    TimeoutException,
+    StaleElementReferenceException
+)
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -59,7 +62,7 @@ def get_latest_followers_excel():
         if f.startswith("facebook_followers_") and f.endswith(".xlsx")
     ]
     if not files:
-        raise FileNotFoundError("No facebook_followers_*.xlsx found")
+        raise FileNotFoundError("No facebook_followers_*.xlsx found in output folder")
 
     files.sort(reverse=True)
     latest = os.path.join(OUTPUT_DIR, files[0])
@@ -68,6 +71,16 @@ def get_latest_followers_excel():
 
 
 INPUT_EXCEL = get_latest_followers_excel()
+
+
+# ================= RETRY HELPER =================
+def retry(action, retries=3, wait=1):
+    for _ in range(retries):
+        try:
+            return action()
+        except StaleElementReferenceException:
+            time.sleep(wait)
+    return None
 
 
 # ================= DRIVER =================
@@ -112,10 +125,10 @@ def load_facebook_cookies(driver):
     time.sleep(5)
 
     if "login" in driver.current_url.lower() or "checkpoint" in driver.current_url.lower():
-        safe_print("⚠ Facebook session warning, continuing anyway")
+        safe_print("⚠ Facebook session warning (checkpoint/login detected)")
 
 
-# ================= EXCEL =================
+# ================= OUTPUT EXCEL =================
 def init_output_excel():
     wb = Workbook()
     ws = wb.active
@@ -132,32 +145,40 @@ def init_output_excel():
 # ================= ABOUT PAGE =================
 def open_about_and_scroll(driver):
     try:
-        about_btn = driver.find_element(
+        time.sleep(2)
+        retry(lambda: driver.find_element(
             By.XPATH,
             "//a[contains(@href,'/about') or .//span[normalize-space()='About']]"
-        )
-        driver.execute_script("arguments[0].click();", about_btn)
-        time.sleep(4)
+        ).click())
+        time.sleep(3)
     except Exception:
         driver.get(driver.current_url.rstrip("/") + "/about")
-        time.sleep(4)
+        time.sleep(3)
 
-    for _ in range(8):
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(2)
+    # Gentle scrolling to avoid DOM rebuild
+    for _ in range(5):
+        driver.execute_script("window.scrollBy(0, 700)")
+        time.sleep(1.5)
 
 
 # ================= CONTACT EXTRACTION =================
 def extract_contact_info(driver):
     data = {"email": "", "phone": "", "address": ""}
 
-    blocks = driver.find_elements(
-        By.XPATH,
-        "//div[@role='main']//span | //div[@role='main']//div"
-    )
+    try:
+        blocks = driver.find_elements(
+            By.XPATH,
+            "//div[@role='main']//span | //div[@role='main']//div"
+        )
+    except StaleElementReferenceException:
+        return data
 
     for b in blocks:
-        raw = b.text.strip()
+        try:
+            raw = b.text.strip()
+        except StaleElementReferenceException:
+            continue
+
         if not raw:
             continue
 
@@ -179,13 +200,13 @@ def extract_contact_info(driver):
             if (
                 not data["address"]
                 and len(t) > 10
-                and not "@" in t
+                and "@" not in t
                 and not t.startswith("http")
             ):
                 if any(x in tl for x in [
                     "street", "road", "suite", "city", "state",
-                    "district", "bangladesh", "india",
-                    "united", "california", "san francisco"
+                    "district", "india", "bangladesh",
+                    "united", "california"
                 ]):
                     data["address"] = t.strip()
 
@@ -202,9 +223,17 @@ def extract_links(driver):
         "twitter": ""
     }
 
-    anchors = driver.find_elements(By.XPATH, "//a[@href]")
+    try:
+        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+    except StaleElementReferenceException:
+        return links
+
     for a in anchors:
-        href = a.get_attribute("href")
+        try:
+            href = a.get_attribute("href")
+        except StaleElementReferenceException:
+            continue
+
         if not href:
             continue
 
@@ -249,7 +278,7 @@ def enrich_profiles():
 
         try:
             driver.get(profile_url)
-            time.sleep(4)
+            time.sleep(3)
 
             open_about_and_scroll(driver)
 
@@ -270,9 +299,9 @@ def enrich_profiles():
             ])
 
         except TimeoutException as e:
-            safe_print(f"⏱ Timeout: {e}")
+            safe_print(f"[TIMEOUT ROW {row}] {e}")
         except Exception as e:
-            safe_print(f"❌ Error: {e}")
+            safe_print(f"[SKIPPED ROW {row}] {e}")
 
     out_wb.save(OUTPUT_EXCEL)
     safe_print(f"✅ Output saved: {OUTPUT_EXCEL}")

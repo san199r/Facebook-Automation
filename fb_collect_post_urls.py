@@ -36,8 +36,6 @@ def init_driver():
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--start-maximized")
-
-    # REQUIRED FOR JENKINS
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
@@ -51,7 +49,6 @@ def init_driver():
 
 # ================= LOAD COOKIES =================
 def load_facebook_cookies(driver):
-    print("Loading Facebook cookies...")
     driver.get("https://www.facebook.com/")
     time.sleep(4)
 
@@ -94,8 +91,8 @@ def init_excel():
     return wb, ws
 
 
-# ================= POST COLLECTION =================
-def collect_post_urls(driver, scrolls=12):
+# ================= REAL POST URL COLLECTION =================
+def collect_real_post_urls(driver, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
@@ -107,16 +104,23 @@ def collect_post_urls(driver, scrolls=12):
             if not href:
                 continue
 
+            href = href.split("?")[0]
+
+            # EXCLUDE search & language URLs
+            if "/search/" in href:
+                continue
+
+            # ACCEPT only REAL post URLs
             if (
                 "facebook.com" in href
                 and (
-                    "permalink.php" in href
+                    "/posts/" in href
+                    or "permalink.php" in href
                     or "story_fbid=" in href
-                    or "/posts/" in href
                     or ("/groups/" in href and "/posts/" in href)
                 )
             ):
-                post_urls.add(href.split("?")[0])
+                post_urls.add(href)
 
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(5)
@@ -128,9 +132,10 @@ def collect_post_urls(driver, scrolls=12):
 def run():
     driver = init_driver()
 
+    print("Loading cookies...")
     load_facebook_cookies(driver)
 
-    print("Opening Facebook post search...")
+    print("Opening Facebook search posts page...")
     driver.get(SEARCH_URL)
     time.sleep(10)
 
@@ -138,8 +143,8 @@ def run():
         os.path.join(SCREENSHOT_DIR, f"after_search_{TIMESTAMP}.png")
     )
 
-    print("Collecting post URLs...")
-    post_urls = collect_post_urls(driver)
+    print("Collecting REAL post URLs...")
+    post_urls = collect_real_post_urls(driver)
 
     wb, ws = init_excel()
     for idx, url in enumerate(sorted(post_urls), start=1):
@@ -147,7 +152,7 @@ def run():
 
     wb.save(OUTPUT_EXCEL)
 
-    print(f"Total posts collected: {len(post_urls)}")
+    print(f"Total real posts collected: {len(post_urls)}")
     print(f"Excel saved: {OUTPUT_EXCEL}")
 
     driver.save_screenshot(

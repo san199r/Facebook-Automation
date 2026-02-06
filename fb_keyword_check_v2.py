@@ -23,6 +23,7 @@ OUTPUT_EXCEL = os.path.join(
 
 
 # ================= READ EXCEL =================
+print("Reading input Excel...")
 df = pd.read_excel(INPUT_EXCEL)
 
 url_column = None
@@ -32,9 +33,9 @@ for col in df.columns:
         break
 
 if not url_column:
-    raise Exception("❌ Facebook URL column not found in Excel")
+    raise Exception("Facebook URL column not found in Excel")
 
-print(f"✅ Using URL column: {url_column}")
+print(f"Using Facebook URL column: {url_column}")
 
 
 # ================= DRIVER SETUP =================
@@ -61,20 +62,24 @@ results = []
 
 for index, row in df.iterrows():
     page_url = str(row[url_column]).strip()
-    print(f"\n🔍 Opening: {page_url}")
+    print(f"\nOpening page: {page_url}")
 
     if not page_url.startswith("http"):
+        print("Skipping invalid URL")
         continue
 
     try:
         driver.get(page_url)
         time.sleep(6)
+
         smart_scroll()
 
         comments = driver.find_elements(
             By.XPATH,
             "//div[@aria-label='Comment']"
         )
+
+        print(f"Total visible comments found: {len(comments)}")
 
         for comment in comments:
             try:
@@ -96,19 +101,20 @@ for index, row in df.iterrows():
                     "Commenter Profile URL": user.get_attribute("href")
                 })
 
-                print(f"✔ Found keyword comment by: {user.text}")
+                print(f"Keyword found in comment by: {user.text}")
 
             except Exception:
                 continue
 
     except Exception as e:
-        print("⚠ Error:", e)
+        print("Error while processing page:", e)
 
 
 # ================= SAVE OUTPUT =================
+print("\nSaving output Excel...")
 out_df = pd.DataFrame(results)
 out_df.to_excel(OUTPUT_EXCEL, index=False)
 
 driver.quit()
 
-print(f"\n✅ Output saved at: {OUTPUT_EXCEL}")
+print(f"Process completed. Output saved at: {OUTPUT_EXCEL}")

@@ -1,11 +1,6 @@
 import os
 import time
 from datetime import datetime
-import threading
-
-import cv2
-import numpy as np
-import pyautogui
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -24,42 +19,15 @@ COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
-VIDEO_DIR = os.path.join(OUTPUT_DIR, "videos")
 
 os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-os.makedirs(VIDEO_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 
 OUTPUT_EXCEL = os.path.join(
     OUTPUT_DIR, f"facebook_posts_{KEYWORD}_{TIMESTAMP}.xlsx"
 )
-
-VIDEO_FILE = os.path.join(
-    VIDEO_DIR, f"facebook_search_{KEYWORD}_{TIMESTAMP}.avi"
-)
-
-
-# ================= VIDEO RECORDING =================
-recording = True
-
-def record_screen():
-    global recording
-
-    screen_width, screen_height = pyautogui.size()
-    fourcc = cv2.VideoWriter_fourcc(*"XVID")
-    out = cv2.VideoWriter(
-        VIDEO_FILE, fourcc, 8.0, (screen_width, screen_height)
-    )
-
-    while recording:
-        img = pyautogui.screenshot()
-        frame = np.array(img)
-        frame = cv2.cvtColor(frame, cv2.COLOR_BGR2RGB)
-        out.write(frame)
-
-    out.release()
 
 
 # ================= DRIVER =================
@@ -80,7 +48,7 @@ def init_driver():
 # ================= COOKIES LOGIN =================
 def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
-    time.sleep(3)
+    time.sleep(4)
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
         for line in f:
@@ -102,7 +70,7 @@ def load_facebook_cookies(driver):
             driver.add_cookie(cookie)
 
     driver.refresh()
-    time.sleep(6)
+    time.sleep(8)
 
 
 # ================= EXCEL =================
@@ -111,77 +79,64 @@ def init_excel():
     ws = wb.active
     ws.title = "Post URLs"
 
-    headers = ["S.No", "Post URL"]
     bold = Font(bold=True)
-
-    for col, h in enumerate(headers, start=1):
-        ws.cell(1, col, h).font = bold
+    ws.cell(1, 1, "S.No").font = bold
+    ws.cell(1, 2, "Post URL").font = bold
 
     return wb, ws
 
 
-# ================= POST URL COLLECTION =================
-def collect_post_urls(driver, scrolls=10):
+# ================= POST COLLECTION =================
+def collect_post_urls(driver, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
         print(f"Scrolling {i + 1}/{scrolls}")
 
-        articles = driver.find_elements(By.XPATH, "//div[@role='article']")
-
-        for article in articles:
-            try:
-                links = article.find_elements(By.XPATH, ".//a[@href]")
-            except Exception:
+        links = driver.find_elements(By.XPATH, "//a[@href]")
+        for a in links:
+            href = a.get_attribute("href")
+            if not href:
                 continue
 
-            for a in links:
-                href = a.get_attribute("href")
-                if not href:
-                    continue
+            if (
+                "facebook.com" in href
+                and "search/posts" not in href
+                and "groups" not in href
+                and "pages" not in href
+                and "watch" not in href
+                and (
+                    "story_fbid=" in href
+                    or "/posts/" in href
+                    or "/permalink.php" in href
+                )
+            ):
+                clean = href.split("?")[0]
+                post_urls.add(clean)
 
-                if (
-                    "facebook.com" in href
-                    and "search/posts" not in href
-                    and "groups" not in href
-                    and (
-                        "story_fbid=" in href
-                        or "/posts/" in href
-                        or "/permalink/" in href
-                    )
-                ):
-                    post_urls.add(href.split("?")[0])
-
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(4)
+        driver.execute_script("window.scrollBy(0, document.body.scrollHeight);")
+        time.sleep(5)
 
     return post_urls
 
 
 # ================= MAIN =================
 def run():
-    global recording
-
-    # Start video recording
-    video_thread = threading.Thread(target=record_screen)
-    video_thread.start()
-
     driver = init_driver()
 
     print("Loading Facebook cookies...")
     load_facebook_cookies(driver)
 
-    print("Opening post search page...")
+    print("Opening posts search...")
     driver.get(SEARCH_URL)
-    time.sleep(8)
+    time.sleep(10)
 
-    # Screenshot after search
     driver.save_screenshot(
         os.path.join(SCREENSHOT_DIR, f"after_search_{TIMESTAMP}.png")
     )
 
     print("Collecting post URLs...")
-    post_urls = collect_post_urls(driver, scrolls=10)
+    post_urls = collect_post_urls(driver)
 
     wb, ws = init_excel()
 
@@ -190,21 +145,14 @@ def run():
 
     wb.save(OUTPUT_EXCEL)
 
-    print(f"Collected {len(post_urls)} post URLs")
+    print(f"Total posts collected: {len(post_urls)}")
     print(f"Excel saved: {OUTPUT_EXCEL}")
 
-    # Screenshot before close
     driver.save_screenshot(
         os.path.join(SCREENSHOT_DIR, f"before_close_{TIMESTAMP}.png")
     )
 
     driver.quit()
-
-    # Stop recording
-    recording = False
-    video_thread.join()
-
-    print(f"Video saved: {VIDEO_FILE}")
 
 
 # ================= RUN =================

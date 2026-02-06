@@ -1,4 +1,4 @@
-# save as facebook_followers_scraper.py
+# save as GenericFacebookScrapper.py
 
 import os
 import re
@@ -79,7 +79,7 @@ def init_driver():
 # ================= COOKIES =================
 def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
-    time.sleep(3)
+    time.sleep(4)
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
         for line in f:
@@ -104,7 +104,7 @@ def load_facebook_cookies(driver):
             driver.add_cookie(cookie)
 
     driver.refresh()
-    time.sleep(5)
+    time.sleep(6)
 
 
 # ================= EXCEL =================
@@ -121,6 +121,7 @@ def init_or_resume_excel():
                 collected.add(row[2])
 
         safe_print(f"Resuming with {len(collected)} followers")
+
     else:
         wb = Workbook()
         ws = wb.active
@@ -145,13 +146,14 @@ def scrape_followers():
         raise Exception("❌ Cookie login failed")
 
     driver.get(START_URL)
-    time.sleep(5)
+    time.sleep(8)
 
     wb, ws, collected, sno = init_or_resume_excel()
 
     no_new_rounds = 0
-    MAX_NO_NEW = 15
+    MAX_NO_NEW = 20
     last_height = 0
+    scroll_count = 0
 
     safe_print("Collecting followers...")
 
@@ -167,9 +169,13 @@ def scrape_followers():
         for a in anchors:
             try:
                 name = normalize(a.text)
+
+                if not name:
+                    name = normalize(a.get_attribute("aria-label"))
+
                 href = a.get_attribute("href")
 
-                if not is_valid_name(name):
+                if not name or not is_valid_name(name):
                     continue
                 if not href or href in collected:
                     continue
@@ -189,8 +195,16 @@ def scrape_followers():
         else:
             no_new_rounds = 0
 
-        driver.execute_script("window.scrollBy(0, 800);")
-        time.sleep(2)
+        # 👇 SLOW HUMAN SCROLL
+        driver.execute_script("window.scrollBy(0, 400);")
+        time.sleep(4)
+
+        scroll_count += 1
+
+        # 👇 IDLE WAIT EVERY 10 SCROLLS
+        if scroll_count % 10 == 0:
+            safe_print("Idle wait to avoid Facebook throttle...")
+            time.sleep(10)
 
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:

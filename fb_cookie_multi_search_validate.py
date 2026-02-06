@@ -1,10 +1,10 @@
 import os
 import time
 from datetime import datetime
-from urllib.parse import quote
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
@@ -38,7 +38,7 @@ def init_driver():
     return driver
 
 
-# ================= COOKIES (SAME AS YOUR SCRIPT) =================
+# ================= COOKIES =================
 def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
     time.sleep(3)
@@ -77,6 +77,28 @@ def take_screenshot(driver, label):
     print(f"Saved screenshot: {path}")
 
 
+# ================= SEARCH USING SEARCH BOX =================
+def search_keyword(driver, keyword):
+    print(f"Searching keyword: {keyword}")
+
+    # Facebook global search input (top bar)
+    search_input = driver.find_element(
+        By.XPATH,
+        "//input[@aria-label='Search Facebook']"
+    )
+
+    search_input.click()
+    time.sleep(1)
+
+    search_input.send_keys(Keys.CONTROL, "a")
+    search_input.send_keys(Keys.DELETE)
+
+    search_input.send_keys(keyword)
+    search_input.send_keys(Keys.ENTER)
+
+    time.sleep(8)
+
+
 # ================= MAIN =================
 def run():
     driver = init_driver()
@@ -88,8 +110,7 @@ def run():
     driver.get("https://www.facebook.com/me")
     time.sleep(5)
 
-    login_inputs = driver.find_elements(By.XPATH, "//input[@name='email']")
-    if login_inputs:
+    if driver.find_elements(By.XPATH, "//input[@name='email']"):
         take_screenshot(driver, "login_failed")
         print("Login failed. Cookies expired.")
         driver.quit()
@@ -98,27 +119,19 @@ def run():
     print("Login successful.")
     take_screenshot(driver, "after_login")
 
-    # ---- SEARCH KEYWORDS ONE BY ONE ----
-    for keyword in KEYWORDS:
-        encoded = quote(keyword)
-        search_url = f"https://www.facebook.com/search/posts/?q={encoded}"
+    # ---- OPEN HOME ----
+    driver.get("https://www.facebook.com/")
+    time.sleep(5)
 
-        print(f"Searching keyword: {keyword}")
-        driver.get(search_url)
-        time.sleep(8)
+    # ---- SEARCH KEYWORDS ONE BY ONE (CLICK SEARCH AGAIN EACH TIME) ----
+    for idx, keyword in enumerate(KEYWORDS, start=1):
+        search_keyword(driver, keyword)
+        take_screenshot(driver, f"search_{idx}_{keyword}")
 
-        take_screenshot(driver, f"search_{keyword}")
-
-        # optional scroll
-        for _ in range(3):
-            driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-            time.sleep(2)
-
-    # ---- FINAL SCREENSHOT ----
+    # ---- FINAL ----
     take_screenshot(driver, "before_close")
-
     driver.quit()
-    print("All searches completed.")
+    print("Done.")
 
 
 # ================= RUN =================

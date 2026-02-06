@@ -31,15 +31,21 @@ OUTPUT_EXCEL = os.path.join(
 # ================= DRIVER (REAL CHROME PROFILE) =================
 def init_driver():
     options = webdriver.ChromeOptions()
-    options.add_argument("--disable-notifications")
-    options.add_argument("--start-maximized")
-    options.add_argument("--disable-blink-features=AutomationControlled")
 
-    # USE REAL CHROME PROFILE (STEP 5)
+    # Basic stability
+    options.add_argument("--disable-notifications")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--start-maximized")
+
+    # REQUIRED FOR JENKINS
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
+    # USE REAL CHROME PROFILE (CONFIRMED: Profile 6)
     options.add_argument(
         r"--user-data-dir=C:\Users\Dell\AppData\Local\Google\Chrome\User Data"
     )
-    options.add_argument("--profile-directory=fb_profile")
+    options.add_argument("--profile-directory=Profile 6")
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -70,22 +76,19 @@ def collect_post_urls(driver, scrolls=12):
     for i in range(scrolls):
         print(f"Scrolling {i + 1}/{scrolls}")
 
-        links = driver.find_elements(By.XPATH, "//a[@href]")
-        for a in links:
+        anchors = driver.find_elements(By.XPATH, "//a[@href]")
+        for a in anchors:
             href = a.get_attribute("href")
             if not href:
                 continue
 
             if (
                 "facebook.com" in href
-                and "search/posts" not in href
-                and "groups" not in href
-                and "pages" not in href
-                and "watch" not in href
                 and (
-                    "story_fbid=" in href
+                    "permalink.php" in href
+                    or "story_fbid=" in href
                     or "/posts/" in href
-                    or "/permalink.php" in href
+                    or ("/groups/" in href and "/posts/" in href)
                 )
             ):
                 post_urls.add(href.split("?")[0])

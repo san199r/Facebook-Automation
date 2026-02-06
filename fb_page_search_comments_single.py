@@ -1,20 +1,22 @@
 import time
+import os
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-PAGE_URL = "https://www.facebook.com/dealmachineapp/"
+# ================= CONFIG =================
+PAGE_BASE = "https://www.facebook.com/dealmachineapp"
 KEYWORD = "probate"
 
+SEARCH_URL = f"{PAGE_BASE}/search/?q={KEYWORD}"
+COOKIE_FILE = "cookies/facebook_cookies.txt"
 
-# ---------------- DRIVER SETUP ----------------
+
+# ================= DRIVER SETUP =================
 options = Options()
 options.add_argument("--disable-notifications")
 options.add_argument("--start-maximized")
@@ -24,48 +26,56 @@ driver = webdriver.Chrome(
     options=options
 )
 
-wait = WebDriverWait(driver, 25)
+
+# ================= LOAD COOKIES =================
+def load_facebook_cookies():
+    driver.get("https://www.facebook.com/")
+    time.sleep(5)
+
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        for line in f:
+            if line.startswith("#") or not line.strip():
+                continue
+
+            parts = line.strip().split("\t")
+            if len(parts) < 7:
+                continue
+
+            cookie = {
+                "domain": parts[0],
+                "path": parts[2],
+                "name": parts[5],
+                "value": parts[6]
+            }
+
+            try:
+                driver.add_cookie(cookie)
+            except Exception:
+                pass
+
+    driver.refresh()
+    time.sleep(6)
 
 
-# ---------------- OPEN PAGE ----------------
-print("Opening Facebook page...")
-driver.get(PAGE_URL)
-time.sleep(6)
+# ================= LOGIN =================
+print("Loading Facebook cookies...")
+load_facebook_cookies()
+print("Cookies loaded. Logged-in session active.")
 
 
-# ---------------- CLICK PAGE SEARCH ----------------
-print("Clicking page search button...")
-search_button = wait.until(
-    EC.element_to_be_clickable(
-        (By.XPATH, "//div[@aria-label='Search']")
-    )
-)
-search_button.click()
-time.sleep(2)
+# ================= OPEN PAGE SEARCH =================
+print("Opening page search URL...")
+driver.get(SEARCH_URL)
+time.sleep(8)
 
 
-# ---------------- ENTER KEYWORD ----------------
-print("Searching keyword:", KEYWORD)
-search_input = wait.until(
-    EC.presence_of_element_located(
-        (By.XPATH, "//input[@aria-label='Search this Page']")
-    )
-)
+# ================= COLLECT POSTS =================
+print("Collecting post links from search results...")
 
-search_input.clear()
-search_input.send_keys(KEYWORD)
-search_input.send_keys(Keys.ENTER)
-time.sleep(6)
-
-
-# ---------------- OPEN POSTS FROM RESULTS ----------------
-print("Locating posts from search results...")
 posts = driver.find_elements(
     By.XPATH,
     "//a[contains(@href,'/posts/') or contains(@href,'/permalink/')]"
 )
-
-print("Posts found:", len(posts))
 
 post_links = []
 for p in posts:
@@ -73,15 +83,17 @@ for p in posts:
     if link and link not in post_links:
         post_links.append(link)
 
+print(f"Total posts found: {len(post_links)}")
 
-# ---------------- PROCESS EACH POST ----------------
-for post_url in post_links[:5]:   # limit to first 5 for safety
+
+# ================= PROCESS POSTS =================
+for post_url in post_links[:5]:
     print("\nOpening post:", post_url)
     driver.get(post_url)
-    time.sleep(6)
+    time.sleep(8)
 
-    # scroll to load comments
-    for _ in range(3):
+    # Scroll to load comments
+    for _ in range(4):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
 
@@ -90,7 +102,7 @@ for post_url in post_links[:5]:   # limit to first 5 for safety
         "//div[@aria-label='Comment']"
     )
 
-    print("Comments found:", len(comments))
+    print(f"Comments found: {len(comments)}")
 
     for c in comments:
         try:
@@ -105,14 +117,14 @@ for post_url in post_links[:5]:   # limit to first 5 for safety
 
             print("\nMATCH FOUND")
             print("Post URL:", post_url)
-            print("Comment:", comment_text)
+            print("Comment Text:", comment_text)
             print("User Name:", user.text)
-            print("User Profile:", user.get_attribute("href"))
+            print("User Profile URL:", user.get_attribute("href"))
 
         except Exception:
             continue
 
 
-print("\nTest completed. Browser will stay open for 15 seconds.")
+print("\nProcess completed. Browser will stay open for 15 seconds.")
 time.sleep(15)
 driver.quit()

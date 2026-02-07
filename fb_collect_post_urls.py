@@ -9,6 +9,8 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
 # ================= CONFIG =================
@@ -31,8 +33,8 @@ def init_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--start-maximized")
-    # Modern User-Agent is essential to avoid being served the mobile or "lite" version
+    # Force Desktop resolution for Jenkins
+    options.add_argument("--window-size=1920,1080")
     options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/121.0.0.0 Safari/537.36")
     
     driver = webdriver.Chrome(
@@ -46,7 +48,7 @@ def load_facebook_cookies(driver):
     driver.get("https://www.facebook.com/")
     time.sleep(5)
     if not os.path.exists(COOKIE_FILE):
-        print(f"Cookie file missing: {COOKIE_FILE}")
+        print(f"CRITICAL: Cookie file missing at {COOKIE_FILE}")
         return
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
@@ -59,49 +61,52 @@ def load_facebook_cookies(driver):
                 if p[4].isdigit(): cookie["expiry"] = int(p[4])
                 driver.add_cookie(cookie)
             except: continue
+    
+    print("Cookies loaded. Refreshing session...")
     driver.refresh()
-    time.sleep(5)
+    time.sleep(8)
 
-# ================= SMART URL COLLECTION =================
+# ================= DATA COLLECTION =================
 def collect_real_post_urls(driver, scrolls=12):
     post_urls = set()
+    wait = WebDriverWait(driver, 25)
+
+    print("Waiting for feed to populate...")
+    try:
+        # Wait until at least one post container or the feed is present
+        wait.until(EC.presence_of_element_located((By.XPATH, "//div[@role='article'] | //div[@role='feed']")))
+    except:
+        print("TIMEOUT: Results did not load. Saving debug info...")
+        return post_urls
 
     for i in range(scrolls):
         print(f"Scanning Scroll {i + 1}/{scrolls}...")
         
-        # Count post blocks visible on screen for debugging
+        # Check for modern FB post containers
         containers = driver.find_elements(By.XPATH, "//div[@role='article']")
-        print(f"DEBUG: Visible post containers detected: {len(containers)}")
+        print(f"DEBUG: Found {len(containers)} post containers on screen.")
 
         anchors = driver.find_elements(By.TAG_NAME, "a")
         for a in anchors:
             try:
                 href = a.get_attribute("href")
                 if not href or "facebook.com" not in href: continue
+                if "/search/" in href: continue
 
-                # 1. IMMEDIATE EXCLUSION of navigation/search links found in your last run
-                if any(x in href for x in ["/search/", "/notifications", "/messages", "/friends", "/groups/feed/"]):
-                    continue
-
-                # 2. CLEAN: Remove tracking and referral parameters
                 clean_url = href.split("?")[0].split("&")[0]
 
-                # 3. IDENTIFY content from your screenshot patterns
-                # Standard posts often use 'pfbid' IDs; Group posts use /posts/ or /permalink/
-                is_standard_post = "/posts/" in clean_url
-                is_group_post = "/groups/" in clean_url and ("/posts/" in clean_url or "/permalink/" in clean_url)
-                is_video = "/videos/" in clean_url and any(char.isdigit() for char in clean_url)
+                # Target posts, group threads, and videos
+                is_standard = "/posts/" in clean_url
+                is_group = "/groups/" in clean_url and ("/posts/" in clean_url or "/permalink/" in clean_url)
+                is_video = "/videos/" in clean_url and any(c.isdigit() for c in clean_url)
                 
-                if is_standard_post or is_group_post or is_video:
-                    # Filter out group homepages or generic video tabs
+                if is_standard or is_group or is_video:
                     if not clean_url.endswith(("/groups/", "/videos/", "/posts/")):
                         post_urls.add(clean_url)
-            except:
-                continue
+            except: continue
 
-        # Scroll down and wait for Facebook's dynamic "feed" to load more data
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(6) 
+        driver.execute_script("window.scrollBy(0, 1000);")
+        time.sleep(5) 
 
     return post_urls
 
@@ -109,19 +114,35 @@ def collect_real_post_urls(driver, scrolls=12):
 def run():
     driver = init_driver()
     try:
+        # 1. Login
         print("Initializing Session...")
         load_facebook_cookies(driver)
 
+        # 2. Verify Login State
+        driver.get("https://www.facebook.com/me")
+        time.sleep(5)
+        print(f"Verification - Current URL: {driver.current_url}")
+        print(f"Verification - Page Title: {driver.title}")
+        
+        if "login" in driver.current_url:
+            print("ALERT: Login failed. Cookies are likely expired.")
+            driver.save_screenshot(os.path.join(SCREENSHOT_DIR, "LOGIN_FAILED.png"))
+            return
+
+        # 3. Search
         print(f"Searching for: {KEYWORD}")
         driver.get(SEARCH_URL)
-        time.sleep(10) # Give the page time to render posts
+        time.sleep(10) 
 
-        # Take a screenshot so you can see if the results appeared in Jenkins
+        # 4. Debugging Artifacts
         driver.save_screenshot(os.path.join(SCREENSHOT_DIR, f"search_view_{TIMESTAMP}.png"))
+        with open(os.path.join(OUTPUT_DIR, f"debug_source_{TIMESTAMP}.html"), "w", encoding="utf-8") as f:
+            f.write(driver.page_source)
 
+        # 5. Collect
         found_urls = collect_real_post_urls(driver)
 
-        # Save to Excel
+        # 6. Export
         wb = Workbook()
         ws = wb.active
         ws.title = "Captured Posts"
@@ -133,7 +154,6 @@ def run():
 
         wb.save(OUTPUT_EXCEL)
         print(f"Success! Collected {len(found_urls)} real post URLs.")
-        print(f"Results saved to: {OUTPUT_EXCEL}")
 
     finally:
         driver.quit()

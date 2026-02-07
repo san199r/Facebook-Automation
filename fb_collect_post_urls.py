@@ -23,7 +23,12 @@ def safe_print(text):
 
 # ================= CONFIG =================
 KEYWORD = "probate"
-SEARCH_URL = f"https://www.facebook.com/search/top?q={KEYWORD}"
+
+SEARCH_URLS = {
+    "top":    f"https://www.facebook.com/search/top?q={KEYWORD}",
+    "posts":  f"https://www.facebook.com/search/posts?q={KEYWORD}",
+    "photos": f"https://www.facebook.com/search/photos?q={KEYWORD}",
+}
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
@@ -36,7 +41,7 @@ os.makedirs("cookies", exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_{KEYWORD}_posts_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_{KEYWORD}_ALL_posts_{TIMESTAMP}.xlsx"
 )
 
 
@@ -79,20 +84,18 @@ def load_cookies():
     driver.refresh()
     time.sleep(8)
     safe_print("Cookies loaded successfully")
-
     return driver
 
 
-# ================= COLLECT POST URLS + SCREENSHOTS =================
-def collect_post_urls(driver, scrolls=15):
+# ================= COLLECT POSTS + SCREENSHOTS =================
+def collect_post_urls(driver, source_name, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
-        safe_print(f"Scrolling {i+1}/{scrolls}")
+        safe_print(f"[{source_name}] Scroll {i+1}/{scrolls}")
 
-        # Screenshot BEFORE collecting
         driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"scroll_{i+1:02d}.png")
+            os.path.join(SCREENSHOT_DIR, f"{source_name}_scroll_{i+1:02d}.png")
         )
 
         links = driver.find_elements(
@@ -110,7 +113,7 @@ def collect_post_urls(driver, scrolls=15):
             parsed = urlparse(href)
             qs = parse_qs(parsed.query)
 
-            # Text / status post
+            # Text post
             if "/posts/" in href:
                 clean_url = href.split("?")[0]
 
@@ -127,9 +130,8 @@ def collect_post_urls(driver, scrolls=15):
 
             post_urls.add(clean_url)
 
-        # Screenshot AFTER collecting
         driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"collect_{i+1:02d}.png")
+            os.path.join(SCREENSHOT_DIR, f"{source_name}_collect_{i+1:02d}.png")
         )
 
         driver.execute_script("window.scrollBy(0, 1600);")
@@ -141,17 +143,20 @@ def collect_post_urls(driver, scrolls=15):
 # ================= MAIN =================
 def run():
     driver = load_cookies()
+    all_urls = set()
 
     try:
-        driver.get(SEARCH_URL)
-        time.sleep(10)
+        for source, url in SEARCH_URLS.items():
+            safe_print(f"Opening {source.upper()} search")
+            driver.get(url)
+            time.sleep(10)
 
-        # Initial screenshot
-        driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"search_start_{TIMESTAMP}.png")
-        )
+            driver.save_screenshot(
+                os.path.join(SCREENSHOT_DIR, f"{source}_start_{TIMESTAMP}.png")
+            )
 
-        urls = collect_post_urls(driver, scrolls=15)
+            urls = collect_post_urls(driver, source_name=source)
+            all_urls.update(urls)
 
         wb = Workbook()
         ws = wb.active
@@ -161,15 +166,14 @@ def run():
         for cell in ws[1]:
             cell.font = Font(bold=True)
 
-        for i, url in enumerate(sorted(urls), 1):
+        for i, url in enumerate(sorted(all_urls), 1):
             ws.append([i, url])
 
         wb.save(OUTPUT_EXCEL)
 
-        safe_print(f"Total posts collected: {len(urls)}")
+        safe_print(f"TOTAL UNIQUE POSTS COLLECTED: {len(all_urls)}")
         safe_print(f"Excel saved at: {OUTPUT_EXCEL}")
 
-        # Final screenshot
         driver.save_screenshot(
             os.path.join(SCREENSHOT_DIR, f"final_{TIMESTAMP}.png")
         )

@@ -55,7 +55,6 @@ def load_driver_with_cookies():
                             "value": parts[6],
                             "domain": parts[0]
                         })
-
         driver.refresh()
         time.sleep(6)
         print("Cookies loaded successfully")
@@ -71,9 +70,9 @@ def get_post_excel():
         ws = wb.active
         headers = [c.value for c in ws[1]]
         if "Post URL" in headers:
-            print(f"Using input Excel: {f}")
+            print("Using input Excel:", f)
             return f
-    raise Exception("No Excel with 'Post URL' column found")
+    raise Exception("No Excel with Post URL column found")
 
 
 # ================= READ POST URLS =================
@@ -91,19 +90,19 @@ def read_post_urls():
         if r[post_col].value:
             urls.append(r[post_col].value)
 
-    print(f"Loaded {len(urls)} post URLs")
+    print("Loaded", len(urls), "post URLs")
     return urls
 
 
 # ================= EXTRACT COMMENTS =================
 def extract_comments(driver, post_url, ws):
-    print(f"Opening post: {post_url}")
+    print("Opening post:", post_url)
     driver.get(post_url)
     time.sleep(10)
 
     comment_blocks = driver.find_elements(By.XPATH, "//div[@role='article']")
 
-    # ===== CASE 1: NO COMMENTS =====
+    # ===== NO COMMENTS CASE =====
     if len(comment_blocks) == 0:
         ws.append([
             SOURCE,
@@ -121,27 +120,23 @@ def extract_comments(driver, post_url, ws):
 
         fbid = post_url.split("fbid=")[-1].split("&")[0]
         screenshot_path = os.path.join(
-            SCREENSHOT_DIR, f"no_comments_{fbid}.png"
+            SCREENSHOT_DIR, "no_comments_" + fbid + ".png"
         )
         driver.save_screenshot(screenshot_path)
 
-        print("No comments → single NO_COMMENTS row saved")
+        print("No comments - single NO_COMMENTS row saved")
         return
 
-    # ===== CASE 2: COMMENTS EXIST =====
-    print(f"Comments found: {len(comment_blocks)}")
+    # ===== COMMENTS EXIST =====
+    print("Comments found:", len(comment_blocks))
 
     for block in comment_blocks:
         try:
             profile = block.find_element(By.XPATH, ".//a[@role='link']")
             name = " ".join(profile.text.split()).strip()
 
-            # Validate real human name
-            if (
-                len(name) < 4 or
-                len(name) > 60 or
-                " " not in name
-            ):
+            # Filter invalid names
+            if len(name) < 4 or len(name) > 60 or " " not in name:
                 continue
 
             spans = block.find_elements(
@@ -207,7 +202,7 @@ def run():
         extract_comments(driver, url, ws)
 
     wb.save(FINAL_EXCEL)
-    print(f"EXCEL SAVED: {FINAL_EXCEL}")
+    print("EXCEL SAVED:", FINAL_EXCEL)
 
     driver.quit()
 

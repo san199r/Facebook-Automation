@@ -8,6 +8,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 TEST_URL = "https://mbasic.facebook.com/photo.php?fbid=1424104163059216"
 
@@ -38,6 +40,7 @@ def load_driver_with_cookies():
                             "value": parts[6],
                             "domain": parts[0]
                         })
+
         driver.refresh()
         time.sleep(4)
         print("Cookies loaded")
@@ -47,12 +50,17 @@ def load_driver_with_cookies():
 
 def extract_comments(driver):
     driver.get(TEST_URL)
-    time.sleep(5)
+    time.sleep(6)
 
-    # Scroll slowly
-    for _ in range(4):
+    # Scroll slowly to load comments
+    for _ in range(5):
         driver.execute_script("window.scrollBy(0, 800);")
         time.sleep(2)
+
+    # 📸 TAKE SCREENSHOT
+    screenshot_path = os.path.join(OUTPUT_DIR, "mbasic_test_post.png")
+    driver.save_screenshot(screenshot_path)
+    print(f"Screenshot saved at: {screenshot_path}")
 
     comment_blocks = driver.find_elements(By.XPATH, "//div[@data-ft]")
 
@@ -65,7 +73,10 @@ def extract_comments(driver):
     for block in comment_blocks:
         try:
             name = block.find_element(By.XPATH, ".//h3").text.strip()
-            comment = block.find_element(By.XPATH, ".//div[starts-with(@id,'comment')]").text.strip()
+            comment = block.find_element(
+                By.XPATH,
+                ".//div[starts-with(@id,'comment')]"
+            ).text.strip()
 
             if comment:
                 print("NAME   :", name)

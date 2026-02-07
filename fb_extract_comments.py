@@ -1,5 +1,6 @@
 import os
 import time
+from glob import glob
 from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font
 
@@ -11,7 +12,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
-INPUT_EXCEL = "fb_probate_results_20260207_121718.xlsx"
+OUTPUT_DIR = "output"
 OUTPUT_EXCEL = "fb_probate_comments_extracted.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
@@ -32,6 +33,9 @@ def init_driver():
     options = Options()
     options.add_argument("--disable-notifications")
     options.add_argument("--window-size=1920,1080")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
+
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
@@ -56,16 +60,46 @@ def load_driver_with_cookies():
                             "value": parts[6],
                             "domain": parts[0]
                         })
+
         driver.refresh()
         time.sleep(6)
         safe_print("Cookies loaded successfully")
+    else:
+        safe_print("Cookie file not found")
 
     return driver
 
 
+# ================= FIND CORRECT POST-URL EXCEL =================
+def get_latest_post_excel():
+    files = glob(os.path.join(OUTPUT_DIR, "*.xlsx"))
+    if not files:
+        raise FileNotFoundError("No Excel files found inside output/ folder")
+
+    valid_files = []
+
+    for f in files:
+        try:
+            wb = load_workbook(f, read_only=True)
+            ws = wb.active
+            headers = [cell.value for cell in ws[1]]
+            if "Post URL" in headers:
+                valid_files.append(f)
+        except Exception:
+            continue
+
+    if not valid_files:
+        raise Exception("No Excel with 'Post URL' column found in output/ folder")
+
+    latest_file = max(valid_files, key=os.path.getmtime)
+    safe_print(f"Using input Excel: {latest_file}")
+    return latest_file
+
+
 # ================= READ POST URLS =================
 def read_post_urls():
-    wb = load_workbook(INPUT_EXCEL)
+    input_excel = get_latest_post_excel()
+    wb = load_workbook(input_excel)
     ws = wb.active
 
     headers = [cell.value for cell in ws[1]]
@@ -75,9 +109,11 @@ def read_post_urls():
     for row in ws.iter_rows(min_row=2):
         if len(urls) >= MAX_POSTS:
             break
-        if row[post_col - 1].value:
-            urls.append(row[post_col - 1].value)
+        val = row[post_col - 1].value
+        if val and str(val).startswith("http"):
+            urls.append(val)
 
+    safe_print(f"Loaded {len(urls)} post URLs")
     return urls
 
 
@@ -125,7 +161,6 @@ def run():
     driver = load_driver_with_cookies()
 
     post_urls = read_post_urls()
-    safe_print(f"Processing {len(post_urls)} posts")
 
     wb_out = Workbook()
     ws_out = wb_out.active

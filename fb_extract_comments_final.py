@@ -55,6 +55,7 @@ def load_driver_with_cookies():
                             "value": parts[6],
                             "domain": parts[0]
                         })
+
         driver.refresh()
         time.sleep(6)
         print("Cookies loaded successfully")
@@ -100,16 +101,62 @@ def extract_comments(driver, post_url, ws):
     driver.get(post_url)
     time.sleep(10)
 
-    links = driver.find_elements(By.XPATH, "//a[@role='link']")
-    saved = 0
+    comment_blocks = driver.find_elements(By.XPATH, "//div[@role='article']")
 
-    for a in links:
+    # ===== CASE 1: NO COMMENTS =====
+    if len(comment_blocks) == 0:
+        ws.append([
+            SOURCE,
+            KEYWORD,
+            "",
+            "NO_COMMENTS",
+            post_url,
+            "NO_COMMENTS",
+            "",
+            "",
+            "",
+            "",
+            "",
+        ])
+
+        fbid = post_url.split("fbid=")[-1].split("&")[0]
+        screenshot_path = os.path.join(
+            SCREENSHOT_DIR, f"no_comments_{fbid}.png"
+        )
+        driver.save_screenshot(screenshot_path)
+
+        print("No comments → single NO_COMMENTS row saved")
+        return
+
+    # ===== CASE 2: COMMENTS EXIST =====
+    print(f"Comments found: {len(comment_blocks)}")
+
+    for block in comment_blocks:
         try:
-            name = a.text.strip()
-            href = a.get_attribute("href")
+            profile = block.find_element(By.XPATH, ".//a[@role='link']")
+            name = " ".join(profile.text.split()).strip()
 
-            if not name or "facebook.com" not in (href or ""):
+            # Validate real human name
+            if (
+                len(name) < 4 or
+                len(name) > 60 or
+                " " not in name
+            ):
                 continue
+
+            spans = block.find_elements(
+                By.XPATH, ".//span[contains(@class,'x1lliihq')]"
+            )
+
+            texts = []
+            for sp in spans:
+                txt = sp.text.strip()
+                if txt and txt != name:
+                    texts.append(txt)
+
+            comment_text = " ".join(texts).strip()
+            if not comment_text:
+                comment_text = "COMMENT_NOT_VISIBLE"
 
             ws.append([
                 SOURCE,
@@ -117,28 +164,16 @@ def extract_comments(driver, post_url, ws):
                 "",
                 name,
                 post_url,
-                "COMMENT_NOT_VISIBLE",
+                comment_text,
                 "",
                 "",
                 "",
                 "",
                 "",
             ])
-            saved += 1
 
         except Exception:
             continue
-
-    # 📸 SCREENSHOT IF ZERO COMMENTS
-    if saved == 0:
-        fbid = post_url.split("fbid=")[-1].split("&")[0]
-        screenshot_path = os.path.join(
-            SCREENSHOT_DIR, f"no_comments_{fbid}.png"
-        )
-        driver.save_screenshot(screenshot_path)
-        print(f"Screenshot saved for 0 comments: {screenshot_path}")
-
-    print(f"Rows saved for post: {saved}")
 
 
 # ================= MAIN =================

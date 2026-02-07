@@ -8,6 +8,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -19,14 +20,6 @@ COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 MAX_POSTS = 20
 SOURCE = "Facebook"
 KEYWORD = "probate"
-
-
-# ================= SAFE PRINT =================
-def safe_print(text):
-    try:
-        print(text)
-    except Exception:
-        print(text.encode("ascii", errors="ignore").decode())
 
 
 # ================= DRIVER =================
@@ -62,9 +55,9 @@ def load_driver_with_cookies():
                         })
         driver.refresh()
         time.sleep(6)
-        safe_print("Cookies loaded successfully")
+        print("Cookies loaded successfully")
     else:
-        safe_print("Cookie file not found")
+        print("Cookie file not found")
 
     return driver
 
@@ -73,15 +66,12 @@ def load_driver_with_cookies():
 def get_post_excel():
     files = glob(os.path.join(OUTPUT_DIR, "*.xlsx"))
     for f in sorted(files, key=os.path.getmtime, reverse=True):
-        try:
-            wb = load_workbook(f, read_only=True)
-            ws = wb.active
-            headers = [c.value for c in ws[1]]
-            if "Post URL" in headers:
-                safe_print(f"Using input Excel: {f}")
-                return f
-        except Exception:
-            continue
+        wb = load_workbook(f, read_only=True)
+        ws = wb.active
+        headers = [c.value for c in ws[1]]
+        if "Post URL" in headers:
+            print(f"Using input Excel: {f}")
+            return f
     raise Exception("No Excel with 'Post URL' column found")
 
 
@@ -100,72 +90,68 @@ def read_post_urls():
         if r[post_col].value:
             urls.append(r[post_col].value)
 
-    safe_print(f"Loaded {len(urls)} post URLs")
+    print(f"Loaded {len(urls)} post URLs")
     return urls
 
 
 # ================= CLICK VIEW MORE =================
 def click_all_view_more(driver, max_rounds=15):
-    for i in range(max_rounds):
+    for _ in range(max_rounds):
         buttons = driver.find_elements(
             By.XPATH,
             "//span[contains(text(),'View') and (contains(text(),'comment') or contains(text(),'repl'))]"
         )
-
         clicked = 0
         for btn in buttons:
             try:
-                driver.execute_script("arguments[0].scrollIntoView(true);", btn)
-                time.sleep(0.8)
+                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
+                time.sleep(1)
                 driver.execute_script("arguments[0].click();", btn)
                 time.sleep(2)
                 clicked += 1
             except Exception:
                 continue
-
-        safe_print(f"Round {i+1}: clicked {clicked} view-more buttons")
-
         if clicked == 0:
             break
 
 
 # ================= EXTRACT COMMENTS =================
 def extract_comments(driver, post_url, ws):
-    safe_print(f"Opening post: {post_url}")
+    print(f"Opening post: {post_url}")
     driver.get(post_url)
     time.sleep(8)
 
-    # Initial slow scroll
+    # Wait for comments container (photo posts fix)
+    try:
+        WebDriverWait(driver, 12).until(
+            lambda d: len(d.find_elements(
+                By.XPATH,
+                "//div[@role='article'] | //div[@data-ad-preview='message']"
+            )) > 0
+        )
+    except Exception:
+        pass
+
+    # Slow scroll
     for _ in range(5):
         driver.execute_script("window.scrollBy(0, 400);")
         time.sleep(2)
 
-    # Click view-more buttons
     click_all_view_more(driver)
 
-    # Final slow scroll
-    last_count = 0
-    for _ in range(20):
-        driver.execute_script("window.scrollBy(0, 400);")
-        time.sleep(2)
-        blocks = driver.find_elements(By.XPATH, "//div[@role='article']")
-        if len(blocks) == last_count:
-            break
-        last_count = len(blocks)
+    blocks = driver.find_elements(
+        By.XPATH,
+        "//div[@role='article'] | //div[@data-ad-preview='message']"
+    )
 
-    safe_print(f"Total comment blocks loaded: {last_count}")
+    print(f"Comments found: {len(blocks)}")
 
-    # Extract comments
     for block in blocks:
         try:
             profile = block.find_element(By.XPATH, ".//a[@role='link']")
             commenter_name = profile.text.strip()
 
-            spans = block.find_elements(
-                By.XPATH,
-                ".//span[contains(@class,'x1lliihq')]"
-            )
-
+            spans = block.find_elements(By.XPATH, ".//span[contains(@class,'x1lliihq')]")
             comment_text = ""
             for sp in spans:
                 txt = sp.text.strip()
@@ -183,7 +169,11 @@ def extract_comments(driver, post_url, ws):
                 commenter_name,
                 post_url,
                 comment_text,
-                "", "", "", "", ""
+                "",
+                "",
+                "",
+                "",
+                "",
             ])
 
         except Exception:
@@ -221,7 +211,8 @@ def run():
         extract_comments(driver, url, ws)
 
     wb.save(FINAL_EXCEL)
-    safe_print(f"FINAL EXCEL CREATED: {FINAL_EXCEL}")
+    print(f"✅ EXCEL SAVED: {FINAL_EXCEL}")
+
     driver.quit()
 
 

@@ -8,7 +8,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -16,6 +15,9 @@ from webdriver_manager.chrome import ChromeDriverManager
 OUTPUT_DIR = "output"
 FINAL_EXCEL = "fb_comments_final.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
+SCREENSHOT_DIR = "screenshots"
+
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 MAX_POSTS = 20
 SOURCE = "Facebook"
@@ -92,90 +94,51 @@ def read_post_urls():
     return urls
 
 
-# ================= VIEW MORE =================
-def click_all_view_more(driver, rounds=15):
-    for _ in range(rounds):
-        buttons = driver.find_elements(
-            By.XPATH,
-            "//span[contains(text(),'View') and (contains(text(),'comment') or contains(text(),'repl'))]"
-        )
-        clicked = 0
-        for btn in buttons:
-            try:
-                driver.execute_script("arguments[0].scrollIntoView({block:'center'});", btn)
-                time.sleep(1)
-                driver.execute_script("arguments[0].click();", btn)
-                time.sleep(2)
-                clicked += 1
-            except Exception:
-                continue
-        if clicked == 0:
-            break
-
-
 # ================= EXTRACT COMMENTS =================
 def extract_comments(driver, post_url, ws):
     print(f"Opening post: {post_url}")
     driver.get(post_url)
-    time.sleep(8)
+    time.sleep(10)
 
-    try:
-        WebDriverWait(driver, 12).until(
-            lambda d: len(d.find_elements(
-                By.XPATH,
-                "//div[@role='article'] | //div[@data-ad-preview='message']"
-            )) > 0
-        )
-    except Exception:
-        pass
+    links = driver.find_elements(By.XPATH, "//a[@role='link']")
+    saved = 0
 
-    for _ in range(5):
-        driver.execute_script("window.scrollBy(0, 400);")
-        time.sleep(2)
-
-    click_all_view_more(driver)
-
-    blocks = driver.find_elements(
-        By.XPATH,
-        "//div[@role='article'] | //div[@data-ad-preview='message']"
-    )
-
-    print(f"Comments found: {len(blocks)}")
-
-    for block in blocks:
+    for a in links:
         try:
-            profile = block.find_element(By.XPATH, ".//a[@role='link']")
-            commenter_name = profile.text.strip()
+            name = a.text.strip()
+            href = a.get_attribute("href")
 
-            spans = block.find_elements(By.XPATH, ".//span[contains(@class,'x1lliihq')]")
-
-            texts = []
-            for sp in spans:
-                txt = sp.text.strip()
-                if txt and txt != commenter_name:
-                    texts.append(txt)
-
-            comment_text = " ".join(texts).strip()
-
-            if not commenter_name:
+            if not name or "facebook.com" not in (href or ""):
                 continue
 
             ws.append([
                 SOURCE,
                 KEYWORD,
                 "",
-                commenter_name,
+                name,
                 post_url,
-                comment_text,
+                "COMMENT_NOT_VISIBLE",
                 "",
                 "",
                 "",
                 "",
                 "",
             ])
+            saved += 1
 
         except Exception:
             continue
+
+    # 📸 SCREENSHOT IF ZERO COMMENTS
+    if saved == 0:
+        fbid = post_url.split("fbid=")[-1].split("&")[0]
+        screenshot_path = os.path.join(
+            SCREENSHOT_DIR, f"no_comments_{fbid}.png"
+        )
+        driver.save_screenshot(screenshot_path)
+        print(f"Screenshot saved for 0 comments: {screenshot_path}")
+
+    print(f"Rows saved for post: {saved}")
 
 
 # ================= MAIN =================

@@ -5,22 +5,26 @@ from urllib.parse import urlparse, parse_qs
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
-# ================= SAFE PRINT (JENKINS SAFE) =================
+
+# ================= SAFE PRINT =================
 def safe_print(text):
     try:
         print(text)
     except Exception:
         print(text.encode("ascii", errors="ignore").decode())
 
+
 # ================= CONFIG =================
 KEYWORD = "probate"
-SEARCH_URL = "https://www.facebook.com/search/top?q=probate"
+SEARCH_URL = f"https://www.facebook.com/search/top?q={KEYWORD}"
+
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -31,7 +35,10 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 os.makedirs("cookies", exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
-OUTPUT_EXCEL = os.path.join(OUTPUT_DIR, f"fb_probate_posts_{TIMESTAMP}.xlsx")
+OUTPUT_EXCEL = os.path.join(
+    OUTPUT_DIR, f"fb_{KEYWORD}_posts_{TIMESTAMP}.xlsx"
+)
+
 
 # ================= DRIVER =================
 def init_driver():
@@ -45,6 +52,7 @@ def init_driver():
         service=Service(ChromeDriverManager().install()),
         options=options
     )
+
 
 # ================= LOAD COOKIES =================
 def load_cookies():
@@ -74,12 +82,18 @@ def load_cookies():
 
     return driver
 
-# ================= COLLECT REAL POST URLS =================
+
+# ================= COLLECT POST URLS + SCREENSHOTS =================
 def collect_post_urls(driver, scrolls=15):
     post_urls = set()
 
     for i in range(scrolls):
         safe_print(f"Scrolling {i+1}/{scrolls}")
+
+        # Screenshot BEFORE collecting
+        driver.save_screenshot(
+            os.path.join(SCREENSHOT_DIR, f"scroll_{i+1:02d}.png")
+        )
 
         links = driver.find_elements(
             By.XPATH,
@@ -96,27 +110,33 @@ def collect_post_urls(driver, scrolls=15):
             parsed = urlparse(href)
             qs = parse_qs(parsed.query)
 
-            # Case 1: Normal post
+            # Text / status post
             if "/posts/" in href:
                 clean_url = href.split("?")[0]
 
-            # Case 2: Photo post (still a post)
+            # Photo post
             elif "fbid" in qs:
                 clean_url = f"https://www.facebook.com/photo/?fbid={qs['fbid'][0]}"
 
-            # Case 3: Permalink post
+            # Permalink post
             elif "story_fbid" in qs and "id" in qs:
                 clean_url = f"https://www.facebook.com/{qs['id'][0]}/posts/{qs['story_fbid'][0]}"
 
             else:
-                continue  # skip junk links
+                continue
 
             post_urls.add(clean_url)
+
+        # Screenshot AFTER collecting
+        driver.save_screenshot(
+            os.path.join(SCREENSHOT_DIR, f"collect_{i+1:02d}.png")
+        )
 
         driver.execute_script("window.scrollBy(0, 1600);")
         time.sleep(4)
 
     return post_urls
+
 
 # ================= MAIN =================
 def run():
@@ -126,17 +146,18 @@ def run():
         driver.get(SEARCH_URL)
         time.sleep(10)
 
+        # Initial screenshot
         driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"search_{TIMESTAMP}.png")
+            os.path.join(SCREENSHOT_DIR, f"search_start_{TIMESTAMP}.png")
         )
 
-        urls = collect_post_urls(driver)
+        urls = collect_post_urls(driver, scrolls=15)
 
         wb = Workbook()
         ws = wb.active
         ws.title = "Facebook Posts"
-        ws.append(["S.No", "Post URL"])
 
+        ws.append(["S.No", "Post URL"])
         for cell in ws[1]:
             cell.font = Font(bold=True)
 
@@ -144,11 +165,18 @@ def run():
             ws.append([i, url])
 
         wb.save(OUTPUT_EXCEL)
-        safe_print(f"Total post URLs collected: {len(urls)}")
+
+        safe_print(f"Total posts collected: {len(urls)}")
         safe_print(f"Excel saved at: {OUTPUT_EXCEL}")
+
+        # Final screenshot
+        driver.save_screenshot(
+            os.path.join(SCREENSHOT_DIR, f"final_{TIMESTAMP}.png")
+        )
 
     finally:
         driver.quit()
+
 
 if __name__ == "__main__":
     run()

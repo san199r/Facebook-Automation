@@ -1,13 +1,11 @@
 import os
 import time
 from datetime import datetime
-from urllib.parse import urlparse, parse_qs
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
@@ -63,7 +61,7 @@ def init_driver():
 def load_cookies():
     driver = init_driver()
     driver.get("https://www.facebook.com/")
-    time.sleep(4)
+    time.sleep(5)
 
     if not os.path.exists(COOKIE_FILE):
         safe_print("Cookie file not found")
@@ -84,57 +82,59 @@ def load_cookies():
     driver.refresh()
     time.sleep(8)
     safe_print("Cookies loaded successfully")
+
     return driver
 
 
-# ================= COLLECT POSTS + SCREENSHOTS =================
+# ================= COLLECT POSTS (JS BASED) =================
 def collect_post_urls(driver, source_name, scrolls=12):
     post_urls = set()
 
     for i in range(scrolls):
         safe_print(f"[{source_name}] Scroll {i+1}/{scrolls}")
 
+        time.sleep(3)
+
         driver.save_screenshot(
             os.path.join(SCREENSHOT_DIR, f"{source_name}_scroll_{i+1:02d}.png")
         )
 
-        links = driver.find_elements(
-            By.XPATH,
-            "//a[contains(@href,'/posts/') or "
-            "contains(@href,'permalink.php') or "
-            "contains(@href,'facebook.com/photo')]"
-        )
+        # 🔥 KEY FIX: JS-based extraction for FB search
+        urls = driver.execute_script("""
+            let results = new Set();
 
-        for a in links:
-            href = a.get_attribute("href")
-            if not href or "facebook.com" not in href:
-                continue
+            document.querySelectorAll('a').forEach(a => {
+                if (!a.href) return;
 
-            parsed = urlparse(href)
-            qs = parse_qs(parsed.query)
+                if (
+                    a.href.includes('/posts/') ||
+                    a.href.includes('/photo/?fbid=') ||
+                    a.href.includes('permalink.php')
+                ) {
+                    results.add(a.href);
+                }
+            });
 
-            # Text post
+            return Array.from(results);
+        """)
+
+        for href in urls:
             if "/posts/" in href:
-                clean_url = href.split("?")[0]
-
-            # Photo post
-            elif "fbid" in qs:
-                clean_url = f"https://www.facebook.com/photo/?fbid={qs['fbid'][0]}"
-
-            # Permalink post
-            elif "story_fbid" in qs and "id" in qs:
-                clean_url = f"https://www.facebook.com/{qs['id'][0]}/posts/{qs['story_fbid'][0]}"
-
+                clean = href.split("?")[0]
+            elif "/photo/?fbid=" in href:
+                clean = href.split("&")[0]
+            elif "permalink.php" in href:
+                clean = href.split("&")[0]
             else:
                 continue
 
-            post_urls.add(clean_url)
+            post_urls.add(clean)
 
         driver.save_screenshot(
             os.path.join(SCREENSHOT_DIR, f"{source_name}_collect_{i+1:02d}.png")
         )
 
-        driver.execute_script("window.scrollBy(0, 1600);")
+        driver.execute_script("window.scrollBy(0, 1800);")
         time.sleep(4)
 
     return post_urls
@@ -143,7 +143,7 @@ def collect_post_urls(driver, source_name, scrolls=12):
 # ================= MAIN =================
 def run():
     driver = load_cookies()
-    all_urls = set()
+    all_posts = set()
 
     try:
         for source, url in SEARCH_URLS.items():
@@ -156,7 +156,7 @@ def run():
             )
 
             urls = collect_post_urls(driver, source_name=source)
-            all_urls.update(urls)
+            all_posts.update(urls)
 
         wb = Workbook()
         ws = wb.active
@@ -166,12 +166,12 @@ def run():
         for cell in ws[1]:
             cell.font = Font(bold=True)
 
-        for i, url in enumerate(sorted(all_urls), 1):
+        for i, url in enumerate(sorted(all_posts), 1):
             ws.append([i, url])
 
         wb.save(OUTPUT_EXCEL)
 
-        safe_print(f"TOTAL UNIQUE POSTS COLLECTED: {len(all_urls)}")
+        safe_print(f"TOTAL UNIQUE POSTS COLLECTED: {len(all_posts)}")
         safe_print(f"Excel saved at: {OUTPUT_EXCEL}")
 
         driver.save_screenshot(

@@ -56,8 +56,6 @@ def load_driver_with_cookies():
         driver.refresh()
         time.sleep(6)
         print("Cookies loaded successfully")
-    else:
-        print("Cookie file not found")
 
     return driver
 
@@ -94,7 +92,7 @@ def read_post_urls():
     return urls
 
 
-# ================= CLICK VIEW MORE =================
+# ================= VIEW MORE =================
 def click_all_view_more(driver, rounds=15):
     for _ in range(rounds):
         buttons = driver.find_elements(
@@ -121,7 +119,6 @@ def extract_comments(driver, post_url, ws):
     driver.get(post_url)
     time.sleep(8)
 
-    # Wait for comment containers (photo-post fix)
     try:
         WebDriverWait(driver, 12).until(
             lambda d: len(d.find_elements(
@@ -132,7 +129,6 @@ def extract_comments(driver, post_url, ws):
     except Exception:
         pass
 
-    # Slow scroll
     for _ in range(5):
         driver.execute_script("window.scrollBy(0, 400);")
         time.sleep(2)
@@ -152,15 +148,16 @@ def extract_comments(driver, post_url, ws):
             commenter_name = profile.text.strip()
 
             spans = block.find_elements(By.XPATH, ".//span[contains(@class,'x1lliihq')]")
-            comment_text = ""
 
+            texts = []
             for sp in spans:
                 txt = sp.text.strip()
                 if txt and txt != commenter_name:
-                    comment_text = txt
-                    break
+                    texts.append(txt)
 
-            if not commenter_name or not comment_text:
+            comment_text = " ".join(texts).strip()
+
+            if not commenter_name:
                 continue
 
             ws.append([

@@ -95,8 +95,8 @@ def read_post_urls():
 
 
 # ================= CLICK VIEW MORE =================
-def click_all_view_more(driver, max_rounds=15):
-    for _ in range(max_rounds):
+def click_all_view_more(driver, rounds=15):
+    for _ in range(rounds):
         buttons = driver.find_elements(
             By.XPATH,
             "//span[contains(text(),'View') and (contains(text(),'comment') or contains(text(),'repl'))]"
@@ -121,7 +121,7 @@ def extract_comments(driver, post_url, ws):
     driver.get(post_url)
     time.sleep(8)
 
-    # Wait for comments container (photo posts fix)
+    # Wait for comment containers (photo-post fix)
     try:
         WebDriverWait(driver, 12).until(
             lambda d: len(d.find_elements(
@@ -153,6 +153,7 @@ def extract_comments(driver, post_url, ws):
 
             spans = block.find_elements(By.XPATH, ".//span[contains(@class,'x1lliihq')]")
             comment_text = ""
+
             for sp in spans:
                 txt = sp.text.strip()
                 if txt and txt != commenter_name:
@@ -211,7 +212,7 @@ def run():
         extract_comments(driver, url, ws)
 
     wb.save(FINAL_EXCEL)
-    print(f"✅ EXCEL SAVED: {FINAL_EXCEL}")
+    print(f"EXCEL SAVED: {FINAL_EXCEL}")
 
     driver.quit()
 

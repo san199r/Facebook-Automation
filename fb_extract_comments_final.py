@@ -1,34 +1,28 @@
 import os
 import time
-from glob import glob
-from openpyxl import load_workbook, Workbook
+from openpyxl import Workbook, load_workbook
 from openpyxl.styles import Font
-
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
-
 # ================= CONFIG =================
-OUTPUT_DIR = "output"
+KEYWORD = "probate"
+SOURCE = "Facebook"
+
+INPUT_EXCEL = "output/fb_probate_ALL_posts_20260207_134513.xlsx"
 FINAL_EXCEL = "fb_comments_final.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
-SCREENSHOT_DIR = "screenshots"
-
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 MAX_POSTS = 20
-SOURCE = "Facebook"
-KEYWORD = "probate"
-
 
 # ================= DRIVER =================
 def init_driver():
     options = Options()
     options.add_argument("--disable-notifications")
-    options.add_argument("--window-size=1920,1080")
+    options.add_argument("--window-size=1200,900")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
@@ -37,121 +31,73 @@ def init_driver():
         options=options
     )
 
-
 # ================= LOAD COOKIES =================
 def load_driver_with_cookies():
     driver = init_driver()
-    driver.get("https://www.facebook.com/")
-    time.sleep(4)
+    driver.get("https://mbasic.facebook.com/")
+    time.sleep(3)
 
     if os.path.exists(COOKIE_FILE):
         with open(COOKIE_FILE, "r", encoding="utf-8", errors="ignore") as f:
             for line in f:
-                if line.strip() and not line.startswith("#"):
-                    parts = line.strip().split("\t")
-                    if len(parts) >= 7:
-                        driver.add_cookie({
-                            "name": parts[5],
-                            "value": parts[6],
-                            "domain": parts[0]
-                        })
+                if line.startswith("#") or not line.strip():
+                    continue
+                parts = line.strip().split("\t")
+                if len(parts) >= 7:
+                    driver.add_cookie({
+                        "name": parts[5],
+                        "value": parts[6],
+                        "domain": ".facebook.com"
+                    })
         driver.refresh()
-        time.sleep(6)
-        print("Cookies loaded successfully")
+        time.sleep(5)
 
+    print("Cookies loaded")
     return driver
-
-
-# ================= FIND POST URL EXCEL =================
-def get_post_excel():
-    files = glob(os.path.join(OUTPUT_DIR, "*.xlsx"))
-    for f in sorted(files, key=os.path.getmtime, reverse=True):
-        wb = load_workbook(f, read_only=True)
-        ws = wb.active
-        headers = [c.value for c in ws[1]]
-        if "Post URL" in headers:
-            print("Using input Excel:", f)
-            return f
-    raise Exception("No Excel with Post URL column found")
-
 
 # ================= READ POST URLS =================
 def read_post_urls():
-    excel = get_post_excel()
-    wb = load_workbook(excel)
+    wb = load_workbook(INPUT_EXCEL)
     ws = wb.active
 
-    post_col = [c.value for c in ws[1]].index("Post URL")
+    headers = [c.value for c in ws[1]]
+    col = headers.index("Post URL") + 1
 
     urls = []
-    for r in ws.iter_rows(min_row=2):
+    for row in ws.iter_rows(min_row=2):
         if len(urls) >= MAX_POSTS:
             break
-        if r[post_col].value:
-            urls.append(r[post_col].value)
+        val = row[col - 1].value
+        if val:
+            urls.append(val)
 
-    print("Loaded", len(urls), "post URLs")
     return urls
-
 
 # ================= EXTRACT COMMENTS =================
 def extract_comments(driver, post_url, ws):
-    print("Opening post:", post_url)
-    driver.get(post_url)
-    time.sleep(10)
+    fbid = post_url.split("fbid=")[-1]
+    mbasic_url = f"https://mbasic.facebook.com/photo.php?fbid={fbid}"
 
-    comment_blocks = driver.find_elements(By.XPATH, "//div[@role='article']")
+    print(f"Opening: {mbasic_url}")
+    driver.get(mbasic_url)
+    time.sleep(5)
 
-    # ===== NO COMMENTS CASE =====
-    if len(comment_blocks) == 0:
+    comment_blocks = driver.find_elements(By.XPATH, "//div[contains(@id,'comment')]")
+
+    if not comment_blocks:
         ws.append([
-            SOURCE,
-            KEYWORD,
-            "",
+            SOURCE, KEYWORD, "",
             "NO_COMMENTS",
             post_url,
             "NO_COMMENTS",
-            "",
-            "",
-            "",
-            "",
-            "",
+            "", "", "", "", ""
         ])
-
-        fbid = post_url.split("fbid=")[-1].split("&")[0]
-        screenshot_path = os.path.join(
-            SCREENSHOT_DIR, "no_comments_" + fbid + ".png"
-        )
-        driver.save_screenshot(screenshot_path)
-
-        print("No comments - single NO_COMMENTS row saved")
         return
-
-    # ===== COMMENTS EXIST =====
-    print("Comments found:", len(comment_blocks))
 
     for block in comment_blocks:
         try:
-            profile = block.find_element(By.XPATH, ".//a[@role='link']")
-            name = " ".join(profile.text.split()).strip()
-
-            # Filter invalid names
-            if len(name) < 4 or len(name) > 60 or " " not in name:
-                continue
-
-            spans = block.find_elements(
-                By.XPATH, ".//span[contains(@class,'x1lliihq')]"
-            )
-
-            texts = []
-            for sp in spans:
-                txt = sp.text.strip()
-                if txt and txt != name:
-                    texts.append(txt)
-
-            comment_text = " ".join(texts).strip()
-            if not comment_text:
-                comment_text = "COMMENT_NOT_VISIBLE"
+            name = block.find_element(By.XPATH, ".//h3").text.strip()
+            comment = block.find_element(By.XPATH, ".//div[starts-with(@id,'comment')]").text.strip()
 
             ws.append([
                 SOURCE,
@@ -159,17 +105,15 @@ def extract_comments(driver, post_url, ws):
                 "",
                 name,
                 post_url,
-                comment_text,
+                comment,
                 "",
                 "",
                 "",
                 "",
-                "",
+                ""
             ])
-
         except Exception:
             continue
-
 
 # ================= MAIN =================
 def run():
@@ -181,17 +125,13 @@ def run():
     ws.title = "Comments"
 
     headers = [
-        "Source",
-        "Keyword",
-        "Group",
-        "Commenter Name",
-        "Url to find the Comment",
-        "Comment",
-        "CHATGPT response for Comment",
+        "Source", "Keyword", "Group",
+        "Commenter Name", "Url to find the Comment",
+        "Comment", "CHATGPT response for Comment",
         "First Name of the Responder1",
         "Last Name of the Responder1",
         "Comment",
-        "CHATGPT response for Comments Reponse",
+        "CHATGPT response for Comments Reponse"
     ]
 
     ws.append(headers)
@@ -203,9 +143,7 @@ def run():
 
     wb.save(FINAL_EXCEL)
     print("EXCEL SAVED:", FINAL_EXCEL)
-
     driver.quit()
-
 
 if __name__ == "__main__":
     run()

@@ -1,6 +1,8 @@
 import os
 import time
 from datetime import datetime
+from urllib.parse import urlparse, parse_qs
+
 from openpyxl import Workbook
 from openpyxl.styles import Font
 from selenium import webdriver
@@ -72,7 +74,7 @@ def load_cookies():
 
     return driver
 
-# ================= COLLECT POST URLS =================
+# ================= COLLECT REAL POST URLS =================
 def collect_post_urls(driver, scrolls=15):
     post_urls = set()
 
@@ -82,15 +84,34 @@ def collect_post_urls(driver, scrolls=15):
         links = driver.find_elements(
             By.XPATH,
             "//a[contains(@href,'/posts/') or "
-            "contains(@href,'permalink') or "
-            "contains(@href,'facebook.com/photo') or "
-            "contains(@href,'facebook.com/watch')]"
+            "contains(@href,'permalink.php') or "
+            "contains(@href,'facebook.com/photo')]"
         )
 
         for a in links:
             href = a.get_attribute("href")
-            if href and "facebook.com" in href and "/search/" not in href:
-                post_urls.add(href.split("?")[0])
+            if not href or "facebook.com" not in href:
+                continue
+
+            parsed = urlparse(href)
+            qs = parse_qs(parsed.query)
+
+            # Case 1: Normal post
+            if "/posts/" in href:
+                clean_url = href.split("?")[0]
+
+            # Case 2: Photo post (still a post)
+            elif "fbid" in qs:
+                clean_url = f"https://www.facebook.com/photo/?fbid={qs['fbid'][0]}"
+
+            # Case 3: Permalink post
+            elif "story_fbid" in qs and "id" in qs:
+                clean_url = f"https://www.facebook.com/{qs['id'][0]}/posts/{qs['story_fbid'][0]}"
+
+            else:
+                continue  # skip junk links
+
+            post_urls.add(clean_url)
 
         driver.execute_script("window.scrollBy(0, 1600);")
         time.sleep(4)
@@ -123,7 +144,7 @@ def run():
             ws.append([i, url])
 
         wb.save(OUTPUT_EXCEL)
-        safe_print(f"Total posts collected: {len(urls)}")
+        safe_print(f"Total post URLs collected: {len(urls)}")
         safe_print(f"Excel saved at: {OUTPUT_EXCEL}")
 
     finally:

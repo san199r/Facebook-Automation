@@ -21,7 +21,10 @@ POST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
+SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
+
 os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
@@ -65,17 +68,28 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
-# ================= SCROLL + LOAD ALL COMMENTS =================
-def load_all_comments(driver, max_rounds=15):
+# ================= LOAD ALL COMMENTS WITH SCREENSHOTS =================
+def load_all_comments_with_screenshots(driver):
+    step = 1
     last_height = 0
 
-    for i in range(max_rounds):
-        # Try clicking "View more comments"
+    # Screenshot after open
+    driver.save_screenshot(
+        os.path.join(SCREENSHOT_DIR, f"{step:02d}_open.png")
+    )
+    step += 1
+
+    for round_no in range(1, 20):  # safety limit
+        # Click "View more comments" if exists
         links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
         if links:
             try:
                 links[0].click()
                 time.sleep(3)
+                driver.save_screenshot(
+                    os.path.join(SCREENSHOT_DIR, f"{step:02d}_view_more_{round_no}.png")
+                )
+                step += 1
             except:
                 pass
 
@@ -83,10 +97,19 @@ def load_all_comments(driver, max_rounds=15):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
 
+        driver.save_screenshot(
+            os.path.join(SCREENSHOT_DIR, f"{step:02d}_scroll_{round_no}.png")
+        )
+        step += 1
+
         new_height = driver.execute_script("return document.body.scrollHeight")
         if new_height == last_height:
             break
         last_height = new_height
+
+    driver.save_screenshot(
+        os.path.join(SCREENSHOT_DIR, f"{step:02d}_final_all_comments_loaded.png")
+    )
 
 
 # ================= MAIN =================
@@ -100,8 +123,8 @@ def run():
     driver.get(mbasic_url)
     time.sleep(6)
 
-    # 🔥 LOAD ALL COMMENTS
-    load_all_comments(driver)
+    # 🔥 Load comments with screenshots
+    load_all_comments_with_screenshots(driver)
 
     body_text = driver.find_element("tag name", "body").text
     driver.quit()
@@ -119,9 +142,9 @@ def run():
         low = line.lower()
         if low in ignore:
             continue
-        if re.match(r"\d+w", low):   # time like 16w
+        if re.match(r"\d+w", low):
             continue
-        if line.isdigit():           # counts
+        if line.isdigit():
             continue
         cleaned.append(line)
 
@@ -147,7 +170,6 @@ def run():
         name = cleaned[i]
         comment = cleaned[i + 1]
 
-        # heuristic: name short, comment longer
         if len(name.split()) <= 4 and len(comment.split()) > 2:
             ws.append([
                 SOURCE,
@@ -167,6 +189,7 @@ def run():
     print("DONE")
     print("Comments written:", rows_written)
     print("Excel saved at:", OUTPUT_EXCEL)
+    print("Screenshots saved at:", SCREENSHOT_DIR)
     print("===================================")
 
 

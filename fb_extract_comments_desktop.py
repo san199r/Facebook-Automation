@@ -9,9 +9,7 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.webdriver.support.ui import WebDriverWait
-from selenium.webdriver.support import expected_conditions as EC
-from selenium.common.exceptions import TimeoutException
+from selenium.common.exceptions import StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -20,6 +18,7 @@ SOURCE = "FB"
 KEYWORD = "PROBATE"
 
 INPUT_EXCEL = "output/fb_probate_ALL_posts_20260209_110948.xlsx"
+COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
@@ -46,27 +45,53 @@ def init_driver():
     )
 
 
-# ================= SCROLL COMMENTS =================
-def scroll_page(driver, times=6):
-    for _ in range(times):
-        driver.execute_script("window.scrollBy(0, 1200);")
+# ================= LOAD COOKIES =================
+def load_cookies(driver):
+    driver.get("https://www.facebook.com/")
+    time.sleep(5)
+
+    if not os.path.exists(COOKIE_FILE):
+        print("Cookie file not found")
+        return
+
+    with open(COOKIE_FILE, "r", encoding="utf-8", errors="ignore") as f:
+        for line in f:
+            if line.strip() and not line.startswith("#"):
+                parts = line.strip().split("\t")
+                if len(parts) >= 7:
+                    driver.add_cookie({
+                        "name": parts[5],
+                        "value": parts[6],
+                        "domain": parts[0]
+                    })
+
+    driver.refresh()
+    time.sleep(8)
+    print("Cookies loaded")
+
+
+# ================= EXPAND COMMENTS =================
+def expand_comments(driver, rounds=6):
+    for _ in range(rounds):
+        buttons = driver.find_elements(
+            By.XPATH,
+            "//span[contains(text(),'View more') or contains(text(),'See more')]"
+        )
+        for b in buttons:
+            try:
+                driver.execute_script("arguments[0].click();", b)
+                time.sleep(1)
+            except:
+                pass
+
+        driver.execute_script("window.scrollBy(0, 1500);")
         time.sleep(3)
-
-
-def click_view_more(driver):
-    buttons = driver.find_elements(By.XPATH, "//span[contains(text(),'View more') or contains(text(),'See more')]")
-    for btn in buttons:
-        try:
-            driver.execute_script("arguments[0].click();", btn)
-            time.sleep(1)
-        except:
-            pass
 
 
 # ================= MAIN =================
 def run():
     driver = init_driver()
-    wait = WebDriverWait(driver, 15)
+    load_cookies(driver)
 
     wb_in = load_workbook(INPUT_EXCEL)
     ws_in = wb_in.active
@@ -86,27 +111,25 @@ def run():
     for cell in ws_out[1]:
         cell.font = Font(bold=True)
 
-    row_out = 2
-
     try:
-        for row in ws_in.iter_rows(min_row=2, values_only=True):
+        for idx, row in enumerate(ws_in.iter_rows(min_row=2, values_only=True), 1):
             post_url = row[1]
+            print(f"[{idx}] Opening: {post_url}")
 
-            print(f"Opening: {post_url}")
             driver.get(post_url)
             time.sleep(8)
 
-            scroll_page(driver)
-            click_view_more(driver)
-            scroll_page(driver)
+            expand_comments(driver)
 
             driver.save_screenshot(
-                os.path.join(SCREENSHOT_DIR, f"post_{row_out}.png")
+                os.path.join(SCREENSHOT_DIR, f"post_{idx}.png")
             )
 
-            comments = driver.find_elements(By.XPATH, "//div[@aria-label='Comment']")
+            comment_blocks = driver.find_elements(
+                By.XPATH, "//div[@role='article']"
+            )
 
-            if not comments:
+            if not comment_blocks:
                 ws_out.append([
                     SOURCE,
                     KEYWORD,
@@ -114,17 +137,18 @@ def run():
                     post_url,
                     "NO_COMMENTS"
                 ])
-                row_out += 1
                 continue
 
-            for c in comments:
+            for c in comment_blocks:
                 try:
                     name = c.find_element(By.XPATH, ".//strong").text.strip()
+                except StaleElementReferenceException:
+                    continue
                 except:
-                    name = "UNKNOWN"
+                    continue
 
                 try:
-                    text = c.find_element(By.XPATH, ".//span").text.strip()
+                    text = c.find_element(By.XPATH, ".//div[@dir='auto']").text.strip()
                 except:
                     text = ""
 
@@ -136,16 +160,15 @@ def run():
                         post_url,
                         text
                     ])
-                    row_out += 1
 
     finally:
         wb_out.save(OUTPUT_EXCEL)
         driver.quit()
 
-        print("===================================")
+        print("================================")
         print("DONE")
         print(f"Excel saved: {OUTPUT_EXCEL}")
-        print("===================================")
+        print("================================")
 
 
 if __name__ == "__main__":

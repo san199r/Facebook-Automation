@@ -2,12 +2,12 @@
 # https://curl.haxx.se/rfc/cookie_spec.html
 # This is a generated file! Do not edit.
 
-.facebook.com	TRUE	/	TRUE	1802150532	c_user	100004272197390
+.facebook.com	TRUE	/	TRUE	1802154438	c_user	100004272197390
 .facebook.com	TRUE	/	TRUE	1786959670	ps_l	1
 .facebook.com	TRUE	/	TRUE	1786959670	ps_n	1
 .facebook.com	TRUE	/	TRUE	1792212457	datr	6KXDaDbaQTai7IyqAQc76AjT
 .facebook.com	TRUE	/	TRUE	1795934326	sb	dnD8aMqlPJjf4Pj1Nj3_wfWz
 .facebook.com	TRUE	/	TRUE	1771219331	wd	1366x599
 .facebook.com	TRUE	/	TRUE	0	presence	C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1770614531645%2C%22v%22%3A1%7D
-.facebook.com	TRUE	/	TRUE	1778390532	fr	1hPiVLPb3OrJj6gXy.AWdLtqPjPSwQAtSLK9_JOLxhcG4Ehl_JzPjNResJmDVTBG8YRmI.BpiW8E..AAA.0.0.BpiW8E.AWfIzk13R1OXIW5ohSGmtVD70-M
-.facebook.com	TRUE	/	TRUE	1802150532	xs	41%3AdCa4Au7BPNTYHg%3A2%3A1723784056%3A-1%3A-1%3A%3AAcyQEOI5BMqM1SiTB4WRFj7_1cSsTZbv3BEycW7gsnuU
+.facebook.com	TRUE	/	TRUE	1778394438	fr	19oaub1A77ZzfZaJG.AWc_VX8pdyX_hytE2i0k6CW7EubhNg6ZQBualbq7lRb94fWOnzQ.BpiX5G..AAA.0.0.BpiX5G.AWfyRwMpJbaC9xe-71qokr5QCgc
+.facebook.com	TRUE	/	TRUE	1802154438	xs	41%3AdCa4Au7BPNTYHg%3A2%3A1723784056%3A-1%3A-1%3A%3AAcy3jWAnnJEk2TwDyaQVUf-XQ4ihnSc-ETmlquQk5BnS

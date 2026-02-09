@@ -2,7 +2,6 @@ import os
 import time
 import re
 from datetime import datetime
-from urllib.parse import urlparse, parse_qs
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -10,9 +9,8 @@ from openpyxl.styles import Font
 from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
-
-from bs4 import BeautifulSoup
 
 
 # ================= CONFIG =================
@@ -27,7 +25,7 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_single_post_comments_with_id_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_single_post_comments_{TIMESTAMP}.xlsx"
 )
 
 
@@ -42,6 +40,7 @@ def init_driver():
     )
 
 
+# ================= LOAD COOKIES =================
 def load_cookies(driver):
     driver.get("https://mbasic.facebook.com/")
     time.sleep(4)
@@ -66,6 +65,30 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
+# ================= SCROLL + LOAD ALL COMMENTS =================
+def load_all_comments(driver, max_rounds=15):
+    last_height = 0
+
+    for i in range(max_rounds):
+        # Try clicking "View more comments"
+        links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
+        if links:
+            try:
+                links[0].click()
+                time.sleep(3)
+            except:
+                pass
+
+        # Scroll
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
+
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
+
+
 # ================= MAIN =================
 def run():
     driver = init_driver()
@@ -77,16 +100,32 @@ def run():
     driver.get(mbasic_url)
     time.sleep(6)
 
-    # Scroll to load comments
-    for _ in range(3):
-        driver.execute_script("window.scrollBy(0, 1200)")
-        time.sleep(2)
+    # 🔥 LOAD ALL COMMENTS
+    load_all_comments(driver)
 
-    html = driver.page_source
+    body_text = driver.find_element("tag name", "body").text
     driver.quit()
 
-    soup = BeautifulSoup(html, "html.parser")
+    # -------- PARSE COMMENTS FROM BODY TEXT --------
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
+    ignore = {
+        "like", "reply", "share", "comment", "most relevant",
+        "view more comments", "write a comment", "comments"
+    }
+
+    cleaned = []
+    for line in lines:
+        low = line.lower()
+        if low in ignore:
+            continue
+        if re.match(r"\d+w", low):   # time like 16w
+            continue
+        if line.isdigit():           # counts
+            continue
+        cleaned.append(line)
+
+    # -------- WRITE TO EXCEL --------
     wb = Workbook()
     ws = wb.active
     ws.title = "Comments"
@@ -96,64 +135,37 @@ def run():
         "Keyword",
         "Commentator",
         "Comment",
-        "Commenter FB ID",
         "Commenter URL"
     ]
     ws.append(headers)
     for c in ws[1]:
         c.font = Font(bold=True)
 
-    rows = 0
+    i = 0
+    rows_written = 0
+    while i < len(cleaned) - 1:
+        name = cleaned[i]
+        comment = cleaned[i + 1]
 
-    # Each comment block usually has a profile link + text nearby
-    for div in soup.find_all("div"):
-        a = div.find("a", href=True)
-        if not a:
-            continue
-
-        name = a.get_text(strip=True)
-        href = a["href"]
-
-        # Ignore non-profile links
-        if "profile.php" not in href and not href.startswith("/"):
-            continue
-
-        # Extract FB ID
-        fb_id = ""
-        full_url = "https://facebook.com" + href if href.startswith("/") else href
-
-        if "profile.php" in href:
-            qs = parse_qs(urlparse(href).query)
-            fb_id = qs.get("id", [""])[0]
+        # heuristic: name short, comment longer
+        if len(name.split()) <= 4 and len(comment.split()) > 2:
+            ws.append([
+                SOURCE,
+                KEYWORD,
+                name,
+                comment,
+                POST_URL
+            ])
+            rows_written += 1
+            i += 2
         else:
-            # username-based profile
-            fb_id = href.strip("/").split("?")[0]
-
-        # Try to find comment text near this name
-        text = div.get_text(" ", strip=True)
-        text = text.replace(name, "").strip()
-
-        # Filter noise
-        if len(text.split()) < 3:
-            continue
-        if "like" in text.lower() and "reply" in text.lower():
-            continue
-
-        ws.append([
-            SOURCE,
-            KEYWORD,
-            name,
-            text,
-            fb_id,
-            full_url
-        ])
-        rows += 1
+            i += 1
 
     wb.save(OUTPUT_EXCEL)
 
     print("===================================")
     print("DONE")
-    print("Comments written:", rows)
+    print("Comments written:", rows_written)
     print("Excel saved at:", OUTPUT_EXCEL)
     print("===================================")
 

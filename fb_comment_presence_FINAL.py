@@ -1,17 +1,34 @@
 import os
 import time
+import re
+from datetime import datetime
+
+from openpyxl import Workbook
+from openpyxl.styles import Font
 
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from webdriver_manager.chrome import ChromeDriverManager
 
 
-TEST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
+# ================= CONFIG =================
+SOURCE = "FB"
+KEYWORD = "PROBATE"
+
+POST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
+OUTPUT_DIR = "output"
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_EXCEL = os.path.join(
+    OUTPUT_DIR, f"fb_single_post_comments_{TIMESTAMP}.xlsx"
+)
+
+
+# ================= DRIVER =================
 def init_driver():
     options = Options()
     options.add_argument("--window-size=1200,900")
@@ -22,6 +39,7 @@ def init_driver():
     )
 
 
+# ================= LOAD COOKIES =================
 def load_cookies(driver):
     driver.get("https://mbasic.facebook.com/")
     time.sleep(4)
@@ -46,50 +64,87 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
+# ================= MAIN =================
 def run():
     driver = init_driver()
     load_cookies(driver)
 
-    mbasic_url = to_mbasic(TEST_URL)
-    print("\nOPENING URL:")
-    print(mbasic_url)
+    mbasic_url = to_mbasic(POST_URL)
+    print("Opening:", mbasic_url)
 
     driver.get(mbasic_url)
     time.sleep(6)
 
-    # Scroll a few times
-    for i in range(3):
+    # Scroll to load comments
+    for _ in range(3):
         driver.execute_script("window.scrollBy(0, 1200)")
         time.sleep(2)
 
-    print("\n==============================")
-    print("TRY 1: div id starts with comment_")
-    print("==============================")
-
-    blocks = driver.find_elements(By.XPATH, "//div[starts-with(@id,'comment_')]")
-    print("Found blocks:", len(blocks))
-
-    for i, b in enumerate(blocks, 1):
-        print(f"\n[BLOCK {i}]")
-        print(b.text)
-
-    print("\n==============================")
-    print("TRY 2: any <strong> (names)")
-    print("==============================")
-
-    strongs = driver.find_elements(By.TAG_NAME, "strong")
-    for i, s in enumerate(strongs, 1):
-        print(f"[STRONG {i}]: {s.text}")
-
-    print("\n==============================")
-    print("TRY 3: BODY TEXT (first 3000 chars)")
-    print("==============================")
-
-    body_text = driver.find_element(By.TAG_NAME, "body").text
-    print(body_text[:3000])
-
+    body_text = driver.find_element("tag name", "body").text
     driver.quit()
-    print("\nDONE")
+
+    # -------- PARSE COMMENTS FROM BODY TEXT --------
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
+
+    ignore = {
+        "like", "reply", "share", "comment", "most relevant",
+        "view more comments", "write a comment", "comments"
+    }
+
+    cleaned = []
+    for line in lines:
+        low = line.lower()
+        if low in ignore:
+            continue
+        if re.match(r"\d+w", low):   # time like 16w
+            continue
+        if line.isdigit():           # counts
+            continue
+        cleaned.append(line)
+
+    # -------- WRITE TO EXCEL --------
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comments"
+
+    headers = [
+        "Source",
+        "Keyword",
+        "Commentator",
+        "Comment",
+        "Commenter URL"
+    ]
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+
+    i = 0
+    rows_written = 0
+    while i < len(cleaned) - 1:
+        name = cleaned[i]
+        comment = cleaned[i + 1]
+
+        # heuristic: name short, comment longer
+        if len(name.split()) <= 4 and len(comment.split()) > 2:
+            ws.append([
+                SOURCE,
+                KEYWORD,
+                name,
+                comment,
+                POST_URL
+            ])
+            rows_written += 1
+            i += 2
+        else:
+            i += 1
+
+    wb.save(OUTPUT_EXCEL)
+
+    print("===================================")
+    print("DONE")
+    print("Comments written:", rows_written)
+    print("Excel saved at:", OUTPUT_EXCEL)
+    print("===================================")
 
 
 if __name__ == "__main__":

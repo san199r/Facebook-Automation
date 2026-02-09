@@ -49,7 +49,7 @@ def load_cookies(driver):
     time.sleep(4)
 
     if not os.path.exists(COOKIE_FILE):
-        print("❌ Cookie file not found")
+        print("Cookie file not found")
         return
 
     with open(COOKIE_FILE, "r", encoding="utf-8", errors="ignore") as f:
@@ -65,14 +65,14 @@ def load_cookies(driver):
 
     driver.refresh()
     time.sleep(6)
-    print("✅ Cookies loaded (mbasic)")
+    print("Cookies loaded (mbasic)")
 
 
 def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
-# ================= EXPAND ALL COMMENTS =================
+# ================= EXPAND COMMENTS =================
 def expand_all_comments(driver):
     while True:
         links = driver.find_elements(
@@ -80,7 +80,6 @@ def expand_all_comments(driver):
         )
         if not links:
             break
-
         try:
             links[0].click()
             time.sleep(3)
@@ -120,20 +119,16 @@ def run():
             driver.get(mbasic_url)
             time.sleep(5)
 
-            # 📸 Screenshot after opening
             driver.save_screenshot(
                 os.path.join(SCREENSHOT_DIR, f"post_{idx:02d}_open.png")
             )
 
-            # Expand comments fully
             expand_all_comments(driver)
 
-            # 📸 Screenshot after expanding
             driver.save_screenshot(
                 os.path.join(SCREENSHOT_DIR, f"post_{idx:02d}_expanded.png")
             )
 
-            # ✅ CORRECT COMMENT BLOCKS
             comment_blocks = driver.find_elements(
                 By.XPATH, "//div[starts-with(@id,'comment_')]"
             )
@@ -175,9 +170,9 @@ def run():
         driver.quit()
 
         print("===================================")
-        print("✅ DONE – COMMENTS EXTRACTED")
-        print(f"Excel: {OUTPUT_EXCEL}")
-        print(f"Screenshots: {SCREENSHOT_DIR}")
+        print("DONE")
+        print(f"Excel saved: {OUTPUT_EXCEL}")
+        print(f"Screenshots saved: {SCREENSHOT_DIR}")
         print("===================================")
 
 

@@ -28,7 +28,7 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_BATCH_comments_with_replies_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_CLEAN_comments_{TIMESTAMP}.xlsx"
 )
 
 
@@ -37,6 +37,8 @@ def init_driver():
     options = Options()
     options.add_argument("--window-size=1200,900")
     options.add_argument("--disable-notifications")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
@@ -69,10 +71,10 @@ def to_mbasic(url):
 
 
 # ================= LOAD COMMENTS =================
-def load_all_comments(driver, post_idx):
-    for _ in range(25):
-        links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
+def load_all_comments(driver, idx):
+    for _ in range(30):
         clicked = False
+        links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
         for l in links:
             try:
                 l.click()
@@ -88,16 +90,13 @@ def load_all_comments(driver, post_idx):
             break
 
     driver.save_screenshot(
-        os.path.join(SCREENSHOT_DIR, f"post_{post_idx:02d}_final.png")
+        os.path.join(SCREENSHOT_DIR, f"post_{idx:03d}_final.png")
     )
 
 
-# ================= LOAD REPLIES =================
 def expand_all_replies(driver):
-    for _ in range(15):
-        reply_links = driver.find_elements(
-            By.XPATH, "//a[contains(text(),'reply')]"
-        )
+    for _ in range(20):
+        reply_links = driver.find_elements(By.XPATH, "//a[contains(text(),'reply')]")
         if not reply_links:
             break
         for link in reply_links:
@@ -108,59 +107,77 @@ def expand_all_replies(driver):
                 pass
 
 
-# ================= PARSE BODY TEXT =================
-def parse_comments(body_text):
-    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
+# ================= VALIDATION RULES =================
+IGNORE_PHRASES = [
+    "view more comments",
+    "view all",
+    "write a comment",
+    "new notification",
+    "this photo is from a post",
+    "no comments yet",
+    "all reactions",
+    "most relevant",
+    "edited",
+    "replies",
+]
 
-    ignore = {
-        "like", "reply", "share", "comment", "most relevant",
-        "comments", "write a comment"
-    }
+def is_valid_name(text):
+    if not text:
+        return False
+    if len(text.split()) < 2 or len(text.split()) > 4:
+        return False
+    if not re.match(r"^[A-Za-z .'-]+$", text):
+        return False
+    bad_start = (
+        "view", "new", "all", "no", "this", "part", "chairs",
+        "1d", "2d", "3d"
+    )
+    return not text.lower().startswith(bad_start)
+
+def is_valid_comment(text):
+    if not text or len(text.split()) < 3:
+        return False
+    low = text.lower()
+    for p in IGNORE_PHRASES:
+        if p in low:
+            return False
+    return True
+
+
+# ================= PARSE BODY TEXT =================
+def parse_comments_from_body(body_text):
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
     cleaned = []
     for line in lines:
         low = line.lower()
-        if low in ignore:
+        if low in IGNORE_PHRASES:
             continue
         if re.match(r"\d+w", low):
             continue
         if re.match(r"\d+\s+of\s+\d+", low):
-            continue
-        if "view all" in low and "reply" in low:
-            continue
-        if low == "edited":
-            continue
-        if line in {"·", ".", "…"}:
             continue
         if line.isdigit():
             continue
         cleaned.append(line)
 
     results = []
-    last_parent = ""
-    seen_first = False
-
     i = 0
+
     while i < len(cleaned) - 1:
         name = cleaned[i]
-        text = cleaned[i + 1]
+        comment = cleaned[i + 1]
 
-        # skip post caption
-        if not seen_first and len(name) <= 2:
+        if not is_valid_name(name):
             i += 1
             continue
 
-        if len(name.split()) <= 4 and len(text.split()) > 2:
-            seen_first = True
-            if "replied" in name.lower():
-                commenter = name.replace("replied", "").strip()
-                results.append((commenter, text, "REPLY", last_parent))
-            else:
-                last_parent = name
-                results.append((name, text, "COMMENT", ""))
+        if not is_valid_comment(comment):
             i += 2
-        else:
-            i += 1
+            continue
+
+        results.append((name, comment))
+        i += 2
 
     return results
 
@@ -174,16 +191,7 @@ def run():
     ws_out = wb_out.active
     ws_out.title = "Comments"
 
-    headers = [
-        "Source",
-        "Keyword",
-        "Commentator",
-        "Comment",
-        "Comment Type",
-        "Parent Commentator",
-        "Post URL"
-    ]
-    ws_out.append(headers)
+    ws_out.append(["Source", "Keyword", "Commentator", "Comment", "Post URL"])
     for c in ws_out[1]:
         c.font = Font(bold=True)
 
@@ -207,16 +215,14 @@ def run():
             load_all_comments(driver, idx)
 
             body_text = driver.find_element("tag name", "body").text
-            parsed = parse_comments(body_text)
+            parsed = parse_comments_from_body(body_text)
 
-            for name, comment, ctype, parent in parsed:
+            for name, comment in parsed:
                 ws_out.append([
                     SOURCE,
                     KEYWORD,
                     name,
                     comment,
-                    ctype,
-                    parent,
                     post_url
                 ])
 
@@ -225,9 +231,8 @@ def run():
         driver.quit()
 
         print("===================================")
-        print("DONE – ALL POSTS PROCESSED")
+        print("DONE – CLEAN COMMENTS ONLY")
         print("Excel:", OUTPUT_EXCEL)
-        print("Screenshots:", SCREENSHOT_DIR)
         print("===================================")
 
 

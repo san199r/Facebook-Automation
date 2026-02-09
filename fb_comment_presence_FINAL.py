@@ -3,7 +3,7 @@ import time
 import re
 from datetime import datetime
 
-from openpyxl import Workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
@@ -17,7 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 SOURCE = "FB"
 KEYWORD = "PROBATE"
 
-POST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
+INPUT_EXCEL = "output/fb_probate_ALL_posts_20260209_110948.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -28,7 +28,7 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_single_post_comments_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_BATCH_post_comments_{TIMESTAMP}.xlsx"
 )
 
 
@@ -43,7 +43,6 @@ def init_driver():
     )
 
 
-# ================= LOAD COOKIES =================
 def load_cookies(driver):
     driver.get("https://mbasic.facebook.com/")
     time.sleep(4)
@@ -68,68 +67,43 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
-# ================= LOAD ALL COMMENTS WITH SCREENSHOTS =================
-def load_all_comments_with_screenshots(driver):
+# ================= LOAD ALL COMMENTS (WITH SCREENSHOTS) =================
+def load_all_comments(driver, post_idx):
     step = 1
-    last_height = 0
-
-    # Screenshot after open
     driver.save_screenshot(
-        os.path.join(SCREENSHOT_DIR, f"{step:02d}_open.png")
+        os.path.join(SCREENSHOT_DIR, f"post_{post_idx:02d}_{step:02d}_open.png")
     )
     step += 1
 
-    for round_no in range(1, 20):  # safety limit
-        # Click "View more comments" if exists
+    for round_no in range(1, 30):
+        clicked_any = False
+
         links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
-        if links:
+        for link in links:
             try:
-                links[0].click()
+                link.click()
+                clicked_any = True
                 time.sleep(3)
                 driver.save_screenshot(
-                    os.path.join(SCREENSHOT_DIR, f"{step:02d}_view_more_{round_no}.png")
+                    os.path.join(SCREENSHOT_DIR, f"post_{post_idx:02d}_{step:02d}_view_more.png")
                 )
                 step += 1
             except:
-                pass
+                continue
 
-        # Scroll
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
-
         driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"{step:02d}_scroll_{round_no}.png")
+            os.path.join(SCREENSHOT_DIR, f"post_{post_idx:02d}_{step:02d}_scroll.png")
         )
         step += 1
 
-        new_height = driver.execute_script("return document.body.scrollHeight")
-        if new_height == last_height:
+        if not clicked_any:
             break
-        last_height = new_height
-
-    driver.save_screenshot(
-        os.path.join(SCREENSHOT_DIR, f"{step:02d}_final_all_comments_loaded.png")
-    )
 
 
-# ================= MAIN =================
-def run():
-    driver = init_driver()
-    load_cookies(driver)
-
-    mbasic_url = to_mbasic(POST_URL)
-    print("Opening:", mbasic_url)
-
-    driver.get(mbasic_url)
-    time.sleep(6)
-
-    # 🔥 Load comments with screenshots
-    load_all_comments_with_screenshots(driver)
-
-    body_text = driver.find_element("tag name", "body").text
-    driver.quit()
-
-    # -------- PARSE COMMENTS FROM BODY TEXT --------
+# ================= CLEAN PARSER =================
+def parse_comments_from_body(body_text):
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
     ignore = {
@@ -144,53 +118,87 @@ def run():
             continue
         if re.match(r"\d+w", low):
             continue
+        if re.match(r"\d+\s+of\s+\d+", low):
+            continue
+        if "write a comment" in low:
+            continue
+        if line.strip() in {"·", ".", "…"}:
+            continue
         if line.isdigit():
             continue
         cleaned.append(line)
 
-    # -------- WRITE TO EXCEL --------
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Comments"
+    pairs = []
+    i = 0
+    while i < len(cleaned) - 1:
+        name = cleaned[i]
+        comment = cleaned[i + 1]
+        if len(name.split()) <= 4 and len(comment.split()) > 2:
+            pairs.append((name, comment))
+            i += 2
+        else:
+            i += 1
+
+    return pairs
+
+
+# ================= MAIN =================
+def run():
+    wb_in = load_workbook(INPUT_EXCEL)
+    ws_in = wb_in.active
+
+    wb_out = Workbook()
+    ws_out = wb_out.active
+    ws_out.title = "Comments"
 
     headers = [
         "Source",
         "Keyword",
         "Commentator",
         "Comment",
-        "Commenter URL"
+        "Commenter URL",
+        "Post URL"
     ]
-    ws.append(headers)
-    for c in ws[1]:
+    ws_out.append(headers)
+    for c in ws_out[1]:
         c.font = Font(bold=True)
 
-    i = 0
-    rows_written = 0
-    while i < len(cleaned) - 1:
-        name = cleaned[i]
-        comment = cleaned[i + 1]
+    driver = init_driver()
+    load_cookies(driver)
 
-        if len(name.split()) <= 4 and len(comment.split()) > 2:
-            ws.append([
-                SOURCE,
-                KEYWORD,
-                name,
-                comment,
-                POST_URL
-            ])
-            rows_written += 1
-            i += 2
-        else:
-            i += 1
+    try:
+        for idx, row in enumerate(ws_in.iter_rows(min_row=2, values_only=True), 1):
+            post_url = row[1]
+            mbasic_url = to_mbasic(post_url)
 
-    wb.save(OUTPUT_EXCEL)
+            print(f"[{idx}] Opening:", mbasic_url)
+            driver.get(mbasic_url)
+            time.sleep(6)
 
-    print("===================================")
-    print("DONE")
-    print("Comments written:", rows_written)
-    print("Excel saved at:", OUTPUT_EXCEL)
-    print("Screenshots saved at:", SCREENSHOT_DIR)
-    print("===================================")
+            load_all_comments(driver, idx)
+
+            body_text = driver.find_element("tag name", "body").text
+            pairs = parse_comments_from_body(body_text)
+
+            for name, comment in pairs:
+                ws_out.append([
+                    SOURCE,
+                    KEYWORD,
+                    name,
+                    comment,
+                    post_url,
+                    post_url
+                ])
+
+    finally:
+        wb_out.save(OUTPUT_EXCEL)
+        driver.quit()
+
+        print("===================================")
+        print("DONE – BATCH COMMENTS EXTRACTED")
+        print("Excel:", OUTPUT_EXCEL)
+        print("Screenshots:", SCREENSHOT_DIR)
+        print("===================================")
 
 
 if __name__ == "__main__":

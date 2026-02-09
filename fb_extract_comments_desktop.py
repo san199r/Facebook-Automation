@@ -9,7 +9,6 @@ from selenium import webdriver
 from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
-from selenium.common.exceptions import StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
@@ -23,21 +22,20 @@ COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
 
+os.makedirs(OUTPUT_DIR, exist_ok=True)
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_{KEYWORD}_COMMENTS_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_{KEYWORD}_COMMENTS_MBASIC_{TIMESTAMP}.xlsx"
 )
 
 
 # ================= DRIVER =================
 def init_driver():
     options = Options()
+    options.add_argument("--window-size=1200,900")
     options.add_argument("--disable-notifications")
-    options.add_argument("--window-size=1920,1080")
-    options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--no-sandbox")
 
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -47,8 +45,8 @@ def init_driver():
 
 # ================= LOAD COOKIES =================
 def load_cookies(driver):
-    driver.get("https://www.facebook.com/")
-    time.sleep(5)
+    driver.get("https://mbasic.facebook.com/")
+    time.sleep(4)
 
     if not os.path.exists(COOKIE_FILE):
         print("Cookie file not found")
@@ -62,30 +60,17 @@ def load_cookies(driver):
                     driver.add_cookie({
                         "name": parts[5],
                         "value": parts[6],
-                        "domain": parts[0]
+                        "domain": ".facebook.com"
                     })
 
     driver.refresh()
-    time.sleep(8)
-    print("Cookies loaded")
+    time.sleep(6)
+    print("Cookies loaded (mbasic)")
 
 
-# ================= EXPAND COMMENTS =================
-def expand_comments(driver, rounds=6):
-    for _ in range(rounds):
-        buttons = driver.find_elements(
-            By.XPATH,
-            "//span[contains(text(),'View more') or contains(text(),'See more')]"
-        )
-        for b in buttons:
-            try:
-                driver.execute_script("arguments[0].click();", b)
-                time.sleep(1)
-            except:
-                pass
-
-        driver.execute_script("window.scrollBy(0, 1500);")
-        time.sleep(3)
+# ================= URL CONVERTER =================
+def to_mbasic(url):
+    return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
 # ================= MAIN =================
@@ -114,22 +99,32 @@ def run():
     try:
         for idx, row in enumerate(ws_in.iter_rows(min_row=2, values_only=True), 1):
             post_url = row[1]
-            print(f"[{idx}] Opening: {post_url}")
+            mbasic_url = to_mbasic(post_url)
 
-            driver.get(post_url)
-            time.sleep(8)
+            print(f"[{idx}] Opening: {mbasic_url}")
+            driver.get(mbasic_url)
+            time.sleep(6)
 
-            expand_comments(driver)
-
+            # 📸 Screenshot immediately after opening
             driver.save_screenshot(
-                os.path.join(SCREENSHOT_DIR, f"post_{idx}.png")
+                os.path.join(SCREENSHOT_DIR, f"post_{idx:02d}_open.png")
             )
 
-            comment_blocks = driver.find_elements(
-                By.XPATH, "//div[@role='article']"
+            # Scroll down to load comments
+            for _ in range(3):
+                driver.execute_script("window.scrollBy(0, 1000);")
+                time.sleep(2)
+
+            # 📸 Screenshot after scrolling
+            driver.save_screenshot(
+                os.path.join(SCREENSHOT_DIR, f"post_{idx:02d}_scrolled.png")
             )
 
-            if not comment_blocks:
+            comments = driver.find_elements(
+                By.XPATH, "//div[contains(@id,'comment')]"
+            )
+
+            if not comments:
                 ws_out.append([
                     SOURCE,
                     KEYWORD,
@@ -139,16 +134,14 @@ def run():
                 ])
                 continue
 
-            for c in comment_blocks:
+            for c in comments:
                 try:
                     name = c.find_element(By.XPATH, ".//strong").text.strip()
-                except StaleElementReferenceException:
-                    continue
                 except:
-                    continue
+                    name = "UNKNOWN"
 
                 try:
-                    text = c.find_element(By.XPATH, ".//div[@dir='auto']").text.strip()
+                    text = c.text.replace(name, "").strip()
                 except:
                     text = ""
 
@@ -165,10 +158,11 @@ def run():
         wb_out.save(OUTPUT_EXCEL)
         driver.quit()
 
-        print("================================")
+        print("===================================")
         print("DONE")
-        print(f"Excel saved: {OUTPUT_EXCEL}")
-        print("================================")
+        print(f"Excel saved at: {OUTPUT_EXCEL}")
+        print(f"Screenshots saved at: {SCREENSHOT_DIR}")
+        print("===================================")
 
 
 if __name__ == "__main__":

@@ -3,7 +3,7 @@ import time
 import re
 from datetime import datetime
 
-from openpyxl import Workbook
+from openpyxl import load_workbook, Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
@@ -17,7 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 SOURCE = "FB"
 KEYWORD = "PROBATE"
 
-POST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
+INPUT_EXCEL = "output/fb_probate_ALL_posts_20260209_110948.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -28,7 +28,7 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_single_post_comments_TRY_FBID_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_BATCH_comments_FINAL_{TIMESTAMP}.xlsx"
 )
 
 
@@ -37,6 +37,8 @@ def init_driver():
     options = Options()
     options.add_argument("--window-size=1200,900")
     options.add_argument("--disable-notifications")
+    options.add_argument("--no-sandbox")
+    options.add_argument("--disable-dev-shm-usage")
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
@@ -68,32 +70,11 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
-# ================= TRY GET FB ID =================
-def try_get_fb_id_by_opening(driver, profile_url):
-    fb_id = ""
-    try:
-        original = driver.current_url
-        driver.get(profile_url)
-        time.sleep(3)
-
-        current = driver.current_url
-        match = re.search(r"id=(\d+)", current)
-        if match:
-            fb_id = match.group(1)
-
-        driver.get(original)
-        time.sleep(2)
-    except:
-        pass
-
-    return fb_id
-
-
 # ================= LOAD COMMENTS =================
-def load_all_comments(driver):
-    for _ in range(20):
-        links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
+def load_all_comments(driver, idx):
+    for _ in range(30):
         clicked = False
+        links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
         for l in links:
             try:
                 l.click()
@@ -108,86 +89,150 @@ def load_all_comments(driver):
         if not clicked:
             break
 
+    driver.save_screenshot(
+        os.path.join(SCREENSHOT_DIR, f"post_{idx:03d}_final.png")
+    )
 
-# ================= EXTRACT COMMENTS =================
-def extract_comments(driver):
+
+# ================= EXPAND REPLIES =================
+def expand_all_replies(driver):
+    for _ in range(20):
+        reply_links = driver.find_elements(By.XPATH, "//a[contains(text(),'reply')]")
+        if not reply_links:
+            break
+        for link in reply_links:
+            try:
+                link.click()
+                time.sleep(1.5)
+            except:
+                pass
+
+
+# ================= PARSE BODY TEXT =================
+def parse_comments_from_body(body_text):
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
+
+    ignore_exact = {
+        "like", "reply", "share", "comment", "most relevant",
+        "comments", "write a comment"
+    }
+
+    cleaned = []
+    for line in lines:
+        low = line.lower()
+        if low in ignore_exact:
+            continue
+        if re.match(r"\d+w", low):
+            continue
+        if re.match(r"\d+\s+of\s+\d+", low):
+            continue
+        if "view all" in low and "reply" in low:
+            continue
+        if low == "edited":
+            continue
+        if line in {"·", ".", "…"}:
+            continue
+        if line.isdigit():
+            continue
+        cleaned.append(line)
+
     results = []
+    last_parent = ""
+    seen_first_comment = False
 
-    blocks = driver.find_elements(By.XPATH, "//div[.//a]")
-    for b in blocks:
-        try:
-            name_el = b.find_element(By.XPATH, ".//a")
-            name = name_el.text.strip()
-            profile_url = name_el.get_attribute("href")
+    i = 0
+    while i < len(cleaned) - 1:
+        name = cleaned[i]
+        text = cleaned[i + 1]
 
-            text = b.text.replace(name, "").strip()
-
-            if len(name) < 3 or len(text.split()) < 2:
+        # Skip post caption / junk author before first real comment
+        if not seen_first_comment:
+            if len(name) <= 2:
+                i += 1
+                continue
+            if KEYWORD.lower() in text.lower():
+                i += 2
                 continue
 
-            fb_id = ""
-            match = re.search(r"id=(\d+)", profile_url)
-            if match:
-                fb_id = match.group(1)
+        if len(name.split()) <= 4 and len(text.split()) > 2:
+            seen_first_comment = True
+            if "replied" in name.lower():
+                commenter = name.replace("replied", "").strip()
+                results.append((commenter, text, "REPLY", last_parent))
             else:
-                fb_id = try_get_fb_id_by_opening(driver, profile_url)
-
-            results.append((name, fb_id, text))
-        except:
-            continue
+                last_parent = name
+                results.append((name, text, "COMMENT", ""))
+            i += 2
+        else:
+            i += 1
 
     return results
 
 
 # ================= MAIN =================
 def run():
-    driver = init_driver()
-    load_cookies(driver)
+    wb_in = load_workbook(INPUT_EXCEL)
+    ws_in = wb_in.active
 
-    driver.get(to_mbasic(POST_URL))
-    time.sleep(5)
-
-    load_all_comments(driver)
-    driver.save_screenshot(
-        os.path.join(SCREENSHOT_DIR, f"post_loaded_{TIMESTAMP}.png")
-    )
-
-    comments = extract_comments(driver)
-    driver.quit()
-
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "Comments"
+    wb_out = Workbook()
+    ws_out = wb_out.active
+    ws_out.title = "Comments"
 
     headers = [
         "Source",
         "Keyword",
         "Commentator",
-        "Commentator FB ID",
         "Comment",
+        "Comment Type",
+        "Parent Commentator",
         "Post URL"
     ]
-    ws.append(headers)
-    for c in ws[1]:
+    ws_out.append(headers)
+    for c in ws_out[1]:
         c.font = Font(bold=True)
 
-    for name, fb_id, comment in comments:
-        ws.append([
-            SOURCE,
-            KEYWORD,
-            name,
-            fb_id,
-            comment,
-            POST_URL
-        ])
+    driver = init_driver()
+    load_cookies(driver)
 
-    wb.save(OUTPUT_EXCEL)
+    try:
+        for idx, row in enumerate(ws_in.iter_rows(min_row=2, values_only=True), 1):
+            post_url = row[1]
+            if not post_url:
+                continue
 
-    print("===================================")
-    print("DONE")
-    print("Comments:", len(comments))
-    print("Excel:", OUTPUT_EXCEL)
-    print("===================================")
+            mbasic_url = to_mbasic(post_url)
+            print(f"[{idx}] Processing:", mbasic_url)
+
+            driver.get(mbasic_url)
+            time.sleep(5)
+
+            load_all_comments(driver, idx)
+            expand_all_replies(driver)
+            load_all_comments(driver, idx)
+
+            body_text = driver.find_element("tag name", "body").text
+            parsed = parse_comments_from_body(body_text)
+
+            for name, comment, ctype, parent in parsed:
+                ws_out.append([
+                    SOURCE,
+                    KEYWORD,
+                    name,
+                    comment,
+                    ctype,
+                    parent,
+                    post_url
+                ])
+
+    finally:
+        wb_out.save(OUTPUT_EXCEL)
+        driver.quit()
+
+        print("===================================")
+        print("DONE – FINAL CLEAN RUN")
+        print("Excel:", OUTPUT_EXCEL)
+        print("Screenshots:", SCREENSHOT_DIR)
+        print("===================================")
 
 
 if __name__ == "__main__":

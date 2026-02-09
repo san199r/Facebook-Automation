@@ -90,7 +90,7 @@ def load_all_comments(driver, idx):
             break
 
     driver.save_screenshot(
-        os.path.join(SCREENSHOT_DIR, f"post_{idx:03d}_final.png")
+        os.path.join(SCREENSHOT_DIR, f"post_{idx:03d}_after_comments.png")
     )
 
 
@@ -125,20 +125,36 @@ IGNORE_PHRASES = [
     "all reactions",
     "replies",
     "edited",
+
+    # footer junk
+    "report a problem",
+    "terms & policies",
+    "privacy",
+    "cookies",
+    "meta ©",
 ]
+
 
 def is_valid_name(text):
     if not text:
         return False
+
+    low = text.lower()
+    if low in ("report a problem", "terms & policies"):
+        return False
+
     if len(text.split()) < 2 or len(text.split()) > 4:
         return False
+
     if not re.match(r"^[A-Za-z .'-]+$", text):
         return False
+
     bad_start = (
         "view", "new", "all", "no", "this", "part",
         "1d", "2d", "3d"
     )
-    return not text.lower().startswith(bad_start)
+    return not low.startswith(bad_start)
+
 
 def is_valid_comment(text):
     if not text or len(text.split()) < 3:
@@ -228,6 +244,10 @@ def run():
 
             driver.get(mbasic_url)
             time.sleep(5)
+
+            driver.save_screenshot(
+                os.path.join(SCREENSHOT_DIR, f"post_{idx:03d}_opened.png")
+            )
 
             load_all_comments(driver, idx)
             expand_all_replies(driver)

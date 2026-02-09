@@ -16,7 +16,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 SOURCE = "FB"
 KEYWORD = "PROBATE"
 
-INPUT_EXCEL = "output/fb_probate_ALL_posts_20260209_110948.xlsx"
+INPUT_EXCEL = "fb_probate_ALL_posts_20260209_200346.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"

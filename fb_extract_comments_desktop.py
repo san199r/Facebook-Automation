@@ -70,7 +70,7 @@ def to_mbasic(url):
     return url.replace("www.facebook.com", "mbasic.facebook.com")
 
 
-# ================= LOAD COMMENTS =================
+# ================= LOAD ALL COMMENTS =================
 def load_all_comments(driver, idx):
     for _ in range(30):
         clicked = False
@@ -108,27 +108,59 @@ def expand_all_replies(driver):
                 pass
 
 
+# ================= FILTER RULES =================
+IGNORE_PHRASES = [
+    "like",
+    "reply",
+    "share",
+    "comment",
+    "most relevant",
+    "comments",
+    "write a comment",
+    "view more comments",
+    "view all",
+    "new notification",
+    "this photo is from a post",
+    "no comments yet",
+    "all reactions",
+    "replies",
+    "edited",
+]
+
+def is_valid_name(text):
+    if not text:
+        return False
+    if len(text.split()) < 2 or len(text.split()) > 4:
+        return False
+    if not re.match(r"^[A-Za-z .'-]+$", text):
+        return False
+    bad_start = (
+        "view", "new", "all", "no", "this", "part",
+        "1d", "2d", "3d"
+    )
+    return not text.lower().startswith(bad_start)
+
+def is_valid_comment(text):
+    if not text or len(text.split()) < 3:
+        return False
+    low = text.lower()
+    if any(p in low for p in IGNORE_PHRASES):
+        return False
+    return True
+
+
 # ================= PARSE BODY TEXT =================
 def parse_comments_from_body(body_text):
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
-    ignore_exact = {
-        "like", "reply", "share", "comment", "most relevant",
-        "comments", "write a comment"
-    }
-
     cleaned = []
     for line in lines:
         low = line.lower()
-        if low in ignore_exact:
+        if any(p in low for p in IGNORE_PHRASES):
             continue
         if re.match(r"\d+w", low):
             continue
         if re.match(r"\d+\s+of\s+\d+", low):
-            continue
-        if "view all" in low and "reply" in low:
-            continue
-        if low == "edited":
             continue
         if line in {"·", ".", "…"}:
             continue
@@ -138,33 +170,24 @@ def parse_comments_from_body(body_text):
 
     results = []
     last_parent = ""
-    seen_first_comment = False
 
     i = 0
     while i < len(cleaned) - 1:
         name = cleaned[i]
-        text = cleaned[i + 1]
+        comment = cleaned[i + 1]
 
-        # Skip post caption / junk author before first real comment
-        if not seen_first_comment:
-            if len(name) <= 2:
-                i += 1
-                continue
-            if KEYWORD.lower() in text.lower():
-                i += 2
-                continue
-
-        if len(name.split()) <= 4 and len(text.split()) > 2:
-            seen_first_comment = True
-            if "replied" in name.lower():
-                commenter = name.replace("replied", "").strip()
-                results.append((commenter, text, "REPLY", last_parent))
-            else:
-                last_parent = name
-                results.append((name, text, "COMMENT", ""))
-            i += 2
-        else:
+        if not is_valid_name(name) or not is_valid_comment(comment):
             i += 1
+            continue
+
+        if "replied" in name.lower():
+            commenter = name.replace("replied", "").strip()
+            results.append((commenter, comment, "REPLY", last_parent))
+        else:
+            last_parent = name
+            results.append((name, comment, "COMMENT", ""))
+
+        i += 2
 
     return results
 
@@ -229,7 +252,7 @@ def run():
         driver.quit()
 
         print("===================================")
-        print("DONE – FINAL CLEAN RUN")
+        print("DONE – CLEAN COMMENTS ONLY")
         print("Excel:", OUTPUT_EXCEL)
         print("Screenshots:", SCREENSHOT_DIR)
         print("===================================")

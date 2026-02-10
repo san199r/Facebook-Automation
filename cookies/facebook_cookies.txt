@@ -2,13 +2,13 @@
 # https://curl.haxx.se/rfc/cookie_spec.html
 # This is a generated file! Do not edit.
 
-.facebook.com	TRUE	/	TRUE	1805187837	sb	uYOBaZwRftyJBs5lZ6K8kRS7
-.facebook.com	TRUE	/	TRUE	1770700448	locale	en_GB
-.facebook.com	TRUE	/	TRUE	1804655650	ps_l	1
-.facebook.com	TRUE	/	TRUE	1804655650	ps_n	1
-.facebook.com	TRUE	/	TRUE	1805173270	datr	EWqJaYbAZQqCj-VoHNvfFy76
-.facebook.com	TRUE	/	TRUE	1802191980	c_user	61584290520669
-.facebook.com	TRUE	/	TRUE	0	presence	C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1770655979714%2C%22v%22%3A1%7D
-.facebook.com	TRUE	/	TRUE	1778431980	fr	1yxHN9wwCtTpDa2N5.AWeuMlm0kLEKsI0_Vy6qNuVj09GyYhoyzR76xBwHtcgoYgvV5TY.BpihDs..AAA.0.0.BpihDs.AWdfFyArelBT_6ObC1LK26N5-RM
-.facebook.com	TRUE	/	TRUE	1802191980	xs	4%3A4DnWdbnzKD33lg%3A2%3A1770627834%3A-1%3A-1%3A%3AAcyZAiki9-7G9MNMsHz-Jc12gqB9XtmuiiFlndEiEg
-.facebook.com	TRUE	/	TRUE	1771260788	wd	1366x633
+.facebook.com	TRUE	/	TRUE	1805255321	datr	lqqKaRQ7Fd33yhp4q15sUGx8
+.facebook.com	TRUE	/	TRUE	1805255406	sb	lqqKaeJwOc8TVO4REAMJvcAJ
+.facebook.com	TRUE	/	TRUE	1771300213	wd	1366x641
+.facebook.com	TRUE	/	TRUE	1771300151	locale	en_GB
+.facebook.com	TRUE	/	TRUE	1802231412	c_user	61584290520669
+.facebook.com	TRUE	/	TRUE	1805255408	ps_l	1
+.facebook.com	TRUE	/	TRUE	1805255408	ps_n	1
+.facebook.com	TRUE	/	TRUE	1778471412	fr	1m1f2kXjb2kgJPxMe.AWdpvuH33cFXQ40jFFpQd_rAntdVas0q8KKkCQQd2c74t0iliJg.Bpiqrx..AAA.0.0.Bpiqrx.AWe3lSW4FMANs_4QAhPZ5V8kR4M
+.facebook.com	TRUE	/	TRUE	1802231412	xs	12%3A8nELfoG-y4XTpQ%3A2%3A1770695402%3A-1%3A-1%3A%3AAcz3q4rSdujaVoMw4b2MltUWQXK-iMfgCBuC3H1_Zg
+.facebook.com	TRUE	/	TRUE	0	presence	C%7B%22t3%22%3A%5B%5D%2C%22utc3%22%3A1770695414510%2C%22v%22%3A1%7D

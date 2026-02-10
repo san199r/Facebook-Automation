@@ -161,6 +161,10 @@ def is_ui_noise(text):
     return False
 
 
+def has_real_text(text):
+    return bool(re.search(r"[A-Za-z]", text))
+
+
 # ================= PARSE COMMENTS =================
 def parse_comments_and_replies(body_text):
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
@@ -180,6 +184,7 @@ def parse_comments_and_replies(body_text):
             continue
 
         j = i + 1
+
         if j < len(lines) and is_timestamp(lines[j]):
             j += 1
         if j >= len(lines):
@@ -190,7 +195,7 @@ def parse_comments_and_replies(body_text):
         if (
             is_timestamp(comment)
             or is_ui_noise(comment)
-            or len(comment.split()) < 3
+            or not has_real_text(comment)
         ):
             i += 1
             continue
@@ -242,14 +247,16 @@ def run():
     for c in ws[1]:
         c.font = Font(bold=True)
 
-    for r in parsed:
-        ws.append([SOURCE, KEYWORD, *r, POST_URL])
+    for row in parsed:
+        ws.append([SOURCE, KEYWORD, *row, POST_URL])
 
     wb.save(OUTPUT_EXCEL)
 
+    print("===================================")
     print("DONE")
-    print("Rows:", len(parsed))
+    print("Rows written:", len(parsed))
     print("Excel:", OUTPUT_EXCEL)
+    print("===================================")
 
 
 if __name__ == "__main__":

@@ -75,6 +75,7 @@ def load_cookies(driver):
     print("Cookies loaded")
 
 
+# ================= URL HELPERS =================
 def to_mbasic(url):
     if "mbasic.facebook.com" in url:
         return url
@@ -83,10 +84,24 @@ def to_mbasic(url):
     )
 
 
+# ================= CLICK COMMENT BUTTON =================
+def open_comment_section(driver):
+    try:
+        comment_link = driver.find_element(
+            By.XPATH, "//a[text()='Comment' or contains(text(),'Comment')]"
+        )
+        href = comment_link.get_attribute("href")
+        if href:
+            driver.get(href)
+            time.sleep(3)
+            print("Comment section opened")
+    except:
+        print("Comment button not required / not found")
+
+
 # ================= LOAD ALL COMMENTS =================
 def load_all_comments(driver, tag):
     step = 1
-
     while True:
         driver.save_screenshot(
             os.path.join(SCREENSHOT_DIR, f"{tag}_{step:02d}.png")
@@ -104,7 +119,6 @@ def load_all_comments(driver, tag):
 
             driver.get(href)
             time.sleep(3)
-
         except:
             break
 
@@ -171,14 +185,12 @@ def parse_comments_and_replies(body_text):
     while i < len(cleaned):
         name = cleaned[i]
 
-        # name sanity check
         if len(name.split()) > 4:
             i += 1
             continue
 
         j = i + 1
 
-        # skip timestamp
         if j < len(cleaned) and is_timestamp(cleaned[j]):
             j += 1
 
@@ -212,7 +224,10 @@ def run():
     print("Opening:", mbasic_url)
 
     driver.get(mbasic_url)
-    time.sleep(6)
+    time.sleep(5)
+
+    # NEW STEP
+    open_comment_section(driver)
 
     load_all_comments(driver, "comments")
     expand_all_replies(driver)

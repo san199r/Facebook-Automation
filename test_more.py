@@ -17,7 +17,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 SOURCE = "FB"
 KEYWORD = "PROBATE"
 
-INPUT_EXCEL = "input/fb_probate_ALL_posts_20260210_115220.xlsx"
+INPUT_EXCEL = "fb_probate_ALL_posts_20260210_115220.xlsx"
 POST_URL_COLUMN = "Post URL"   # change ONLY if column name differs
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")

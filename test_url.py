@@ -84,19 +84,18 @@ def to_mbasic(url):
     )
 
 
-# ================= CLICK COMMENT BUTTON =================
+# ================= OPEN COMMENT SECTION =================
 def open_comment_section(driver):
     try:
-        comment_link = driver.find_element(
+        link = driver.find_element(
             By.XPATH, "//a[text()='Comment' or contains(text(),'Comment')]"
         )
-        href = comment_link.get_attribute("href")
+        href = link.get_attribute("href")
         if href:
             driver.get(href)
             time.sleep(3)
-            print("Comment section opened")
     except:
-        print("Comment button not required / not found")
+        pass
 
 
 # ================= LOAD ALL COMMENTS =================
@@ -107,7 +106,6 @@ def load_all_comments(driver, tag):
             os.path.join(SCREENSHOT_DIR, f"{tag}_{step:02d}.png")
         )
         step += 1
-
         try:
             more = driver.find_element(
                 By.XPATH,
@@ -116,7 +114,6 @@ def load_all_comments(driver, tag):
             href = more.get_attribute("href")
             if not href:
                 break
-
             driver.get(href)
             time.sleep(3)
         except:
@@ -127,16 +124,14 @@ def load_all_comments(driver, tag):
 def expand_all_replies(driver):
     for _ in range(15):
         try:
-            reply_links = driver.find_elements(
+            links = driver.find_elements(
                 By.XPATH,
                 "//a[contains(text(),'Reply') or contains(text(),'repl')]"
             )
-
-            if not reply_links:
+            if not links:
                 break
-
-            for link in reply_links:
-                href = link.get_attribute("href")
+            for l in links:
+                href = l.get_attribute("href")
                 if href:
                     driver.get(href)
                     time.sleep(2)
@@ -144,7 +139,7 @@ def expand_all_replies(driver):
             break
 
 
-# ================= TIMESTAMP CHECK =================
+# ================= FILTER HELPERS =================
 def is_timestamp(text):
     return bool(re.match(
         r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},\s+\d{4}",
@@ -152,63 +147,60 @@ def is_timestamp(text):
     ))
 
 
-# ================= PARSE COMMENTS + REPLIES =================
+def is_ui_noise(text):
+    if re.match(r"^[\W_]+$", text):
+        return True
+    if re.match(r"^\d+$", text):
+        return True
+    if re.match(r"^[^\w\s]+\s*\d*$", text):
+        return True
+    if re.match(r"^(like|reply|share|watch)", text.lower()):
+        return True
+    if re.match(r"^[\uE000-\uF8FF]", text):
+        return True
+    return False
+
+
+# ================= PARSE COMMENTS =================
 def parse_comments_and_replies(body_text):
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
-
-    ignore_words = {
-        "like", "reply", "share", "comment",
-        "most relevant", "comments", "write a comment"
-    }
-
-    cleaned = []
-    for line in lines:
-        low = line.lower()
-        if low in ignore_words:
-            continue
-        if re.match(r"\d+[smhdw]$", low):
-            continue
-        if re.match(r"\d+\s+of\s+\d+", low):
-            continue
-        if "view" in low and "reply" in low:
-            continue
-        if low == "edited":
-            continue
-        if line.isdigit():
-            continue
-        cleaned.append(line)
-
     results = []
     last_parent = ""
 
     i = 0
-    while i < len(cleaned):
-        name = cleaned[i]
+    while i < len(lines) - 1:
+        name = lines[i]
 
-        if len(name.split()) > 4:
+        if (
+            len(name.split()) > 4
+            or is_timestamp(name)
+            or is_ui_noise(name)
+        ):
             i += 1
             continue
 
         j = i + 1
-
-        if j < len(cleaned) and is_timestamp(cleaned[j]):
+        if j < len(lines) and is_timestamp(lines[j]):
             j += 1
-
-        if j >= len(cleaned):
+        if j >= len(lines):
             break
 
-        comment_text = cleaned[j]
+        comment = lines[j]
 
-        if len(comment_text.split()) < 2:
+        if (
+            is_timestamp(comment)
+            or is_ui_noise(comment)
+            or len(comment.split()) < 3
+        ):
             i += 1
             continue
 
         if "replied" in name.lower():
             commenter = name.replace("replied", "").strip()
-            results.append((commenter, comment_text, "REPLY", last_parent))
+            results.append((commenter, comment, "REPLY", last_parent))
         else:
             last_parent = name
-            results.append((name, comment_text, "COMMENT", ""))
+            results.append((name, comment, "COMMENT", ""))
 
         i = j + 1
 
@@ -220,15 +212,10 @@ def run():
     driver = init_driver()
     load_cookies(driver)
 
-    mbasic_url = to_mbasic(POST_URL)
-    print("Opening:", mbasic_url)
-
-    driver.get(mbasic_url)
+    driver.get(to_mbasic(POST_URL))
     time.sleep(5)
 
-    # NEW STEP
     open_comment_section(driver)
-
     load_all_comments(driver, "comments")
     expand_all_replies(driver)
     load_all_comments(driver, "after_replies")
@@ -251,30 +238,18 @@ def run():
         "Parent Commentator",
         "Post URL"
     ]
-
     ws.append(headers)
     for c in ws[1]:
         c.font = Font(bold=True)
 
-    for name, comment, ctype, parent in parsed:
-        ws.append([
-            SOURCE,
-            KEYWORD,
-            name,
-            comment,
-            ctype,
-            parent,
-            POST_URL
-        ])
+    for r in parsed:
+        ws.append([SOURCE, KEYWORD, *r, POST_URL])
 
     wb.save(OUTPUT_EXCEL)
 
-    print("===================================")
     print("DONE")
-    print("Rows written:", len(parsed))
+    print("Rows:", len(parsed))
     print("Excel:", OUTPUT_EXCEL)
-    print("Screenshots:", SCREENSHOT_DIR)
-    print("===================================")
 
 
 if __name__ == "__main__":

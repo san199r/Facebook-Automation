@@ -79,28 +79,85 @@ def to_mbasic(url):
 
 
 def is_timestamp(text):
-    return bool(re.match(
-        r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},\s+\d{4}",
-        text.lower()
-    ))
+    """Detect Facebook timestamp patterns like 'Jan 5, 2024' or '2h' or 'Just now'"""
+    t = text.lower().strip()
+    if re.match(
+        r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},?\s+\d{4}", t
+    ):
+        return True
+    if re.match(r"^\d+\s*(h|hr|hrs|min|mins|d|w|m|y)\b", t):
+        return True
+    if t in ("just now", "yesterday"):
+        return True
+    return False
 
 
 def is_ui_noise(text):
-    if re.match(r"^[\W_]+$", text):
+    """Filter out Facebook UI chrome — buttons, icons, reaction counts, etc."""
+    t = text.strip()
+
+    # Pure symbols / numbers
+    if re.match(r"^[\W_]+$", t):
         return True
-    if re.match(r"^\d+$", text):
+    if re.match(r"^\d+$", t):
         return True
-    if re.match(r"^[^\w\s]+\s*\d*$", text):
+
+    # Reaction / action labels
+    ui_words = {
+        "like", "reply", "share", "watch", "follow", "send",
+        "more", "see more", "view more", "load more",
+        "write a comment", "comment", "reactions",
+        "top comments", "most relevant", "newest", "all comments",
+        "hide", "report", "unlike", "love", "haha", "wow", "sad", "angry",
+    }
+    if t.lower() in ui_words:
         return True
-    if re.match(r"^(like|reply|share|watch)", text.lower()):
+
+    # Private emoji-only lines
+    if re.match(r"^[\uE000-\uF8FF\U0001F300-\U0001FAFF\s]+$", t):
         return True
-    if re.match(r"^[\uE000-\uF8FF]", text):
-        return True
+
     return False
 
 
 def has_real_text(text):
     return bool(re.search(r"[A-Za-z]", text))
+
+
+def looks_like_name(text):
+    """
+    Improved name detection:
+    - 1–5 words
+    - Each word starts with uppercase OR is a known lowercase particle
+    - No sentence-ending punctuation (names don't end with periods, ?, !)
+    - Not a known UI phrase
+    """
+    t = text.strip()
+
+    if not has_real_text(t):
+        return False
+
+    # Names don't end with sentence punctuation
+    if re.search(r"[.?!]$", t):
+        return False
+
+    words = t.split()
+    if not (1 <= len(words) <= 5):
+        return False
+
+    # Allow particles like "de", "van", "la", "le", "el", "bin", "binti", "al"
+    particles = {"de", "van", "la", "le", "el", "bin", "binti", "al", "da", "do", "del", "von"}
+
+    for word in words:
+        clean = re.sub(r"[^A-Za-z]", "", word)
+        if not clean:
+            continue
+        if clean.lower() in particles:
+            continue
+        if not clean[0].isupper():
+            return False
+
+    return True
 
 
 # ================= LOAD COMMENTS =================
@@ -122,7 +179,9 @@ def load_all_comments(driver):
         try:
             more = driver.find_element(
                 By.XPATH,
-                "//a[contains(text(),'View more comments') or contains(text(),'See more')]"
+                "//a[contains(text(),'View more comments') or "
+                "contains(text(),'See more comments') or "
+                "contains(text(),'Load more comments')]"
             )
             href = more.get_attribute("href")
             if not href:
@@ -133,27 +192,44 @@ def load_all_comments(driver):
             break
 
 
-# ================= STATEFUL PARSER =================
+# ================= IMPROVED STATEFUL PARSER =================
 def parse_comments(body_text):
+    """
+    Improved parser:
+    - Accumulates multi-line comment text (fixes truncated comments)
+    - Broader name detection (handles particles, varied capitalisation)
+    - Skips timestamps and UI noise before deciding name vs. comment
+    """
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
     results = []
     current_name = None
+    comment_lines = []  # accumulate lines belonging to one comment
+
+    def flush():
+        """Save the buffered comment for the current name."""
+        if current_name and comment_lines:
+            full_comment = " ".join(comment_lines).strip()
+            if has_real_text(full_comment):
+                results.append((current_name, full_comment))
 
     for line in lines:
+        # Always skip timestamps and UI noise
         if is_timestamp(line) or is_ui_noise(line):
             continue
 
-        if (
-            1 <= len(line.split()) <= 4
-            and has_real_text(line)
-            and line == line.title()
-        ):
+        if looks_like_name(line):
+            # Save whatever we buffered for the previous commenter
+            flush()
             current_name = line
-            continue
+            comment_lines = []
+        elif current_name:
+            # Accumulate lines as part of the current comment
+            comment_lines.append(line)
+        # If no name detected yet, we skip (post body / header text)
 
-        if current_name and has_real_text(line):
-            results.append((current_name, line))
+    # Don't forget the last buffered comment
+    flush()
 
     return results
 
@@ -207,11 +283,14 @@ def run():
 
         if not comments:
             ws_out.append([SOURCE, KEYWORD, "NO_COMMENTS", "NO_COMMENTS", post_url])
+            print("  → No comments found")
             continue
 
         for name, comment in comments:
             ws_out.append([SOURCE, KEYWORD, name, comment, post_url])
             total_comments += 1
+
+        print(f"  → {len(comments)} comments captured")
 
     driver.quit()
     wb_out.save(OUTPUT_EXCEL)

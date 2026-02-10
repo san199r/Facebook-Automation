@@ -283,14 +283,14 @@ def run():
 
         if not comments:
             ws_out.append([SOURCE, KEYWORD, "NO_COMMENTS", "NO_COMMENTS", post_url])
-            print("  → No comments found")
+            print("  -> No comments found")
             continue
 
         for name, comment in comments:
             ws_out.append([SOURCE, KEYWORD, name, comment, post_url])
             total_comments += 1
 
-        print(f"  → {len(comments)} comments captured")
+        print(f"  -> {len(comments)} comments captured")
 
     driver.quit()
     wb_out.save(OUTPUT_EXCEL)

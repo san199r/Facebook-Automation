@@ -1,46 +1,62 @@
-import time
 import os
+import time
+import re
+from datetime import datetime
+
 from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
-from selenium.webdriver.common.by import By
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
+from selenium.webdriver.common.by import By
 from webdriver_manager.chrome import ChromeDriverManager
 
+
 # ================= CONFIG =================
-POST_URL = "https://mbasic.facebook.com/photo.php?fbid=122269379360224993"
+SOURCE = "FB"
+KEYWORD = "PROBATE"
+
+POST_URL = "https://www.facebook.com/photo/?fbid=4168798373434713"
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
-OUTPUT = "fb_comments_replies.xlsx"
+OUTPUT_DIR = "output"
+SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
+
+os.makedirs(OUTPUT_DIR, exist_ok=True)
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+OUTPUT_EXCEL = os.path.join(
+    OUTPUT_DIR, f"fb_single_post_comments_with_replies_{TIMESTAMP}.xlsx"
+)
+
 
 # ================= DRIVER =================
 def init_driver():
     options = Options()
+    options.add_argument("--window-size=412,915")
+    options.add_argument("--disable-notifications")
     options.add_argument(
         "user-agent=Mozilla/5.0 (Linux; Android 10; SM-G960U) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.6099.224 Mobile Safari/537.36"
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.6099.224 Mobile Safari/537.36"
     )
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
-    driver = webdriver.Chrome(
+
+    return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
     )
-    driver.execute_script(
-        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
-    )
-    return driver
+
 
 # ================= LOAD COOKIES =================
 def load_cookies(driver):
     driver.get("https://mbasic.facebook.com/")
-    time.sleep(3)
+    time.sleep(4)
 
     if not os.path.exists(COOKIE_FILE):
-        print("No cookie file found!")
+        print("Cookie file not found")
         return
 
     with open(COOKIE_FILE, "r", encoding="utf-8", errors="ignore") as f:
@@ -53,90 +69,173 @@ def load_cookies(driver):
                         "value": parts[6],
                         "domain": ".facebook.com"
                     })
+
     driver.refresh()
-    time.sleep(4)
+    time.sleep(5)
     print("Cookies loaded")
 
-# ================= CLICK ALL COMMENTS =================
-def expand_comments(driver):
+
+def to_mbasic(url):
+    if "mbasic.facebook.com" in url:
+        return url
+    return url.replace("www.facebook.com", "mbasic.facebook.com").replace(
+        "photo/?", "photo.php?"
+    )
+
+
+# ================= LOAD ALL COMMENTS =================
+def load_all_comments(driver, tag):
+    step = 1
+
     while True:
+        driver.save_screenshot(
+            os.path.join(SCREENSHOT_DIR, f"{tag}_{step:02d}.png")
+        )
+        step += 1
+
         try:
-            btn = driver.find_element(
+            more = driver.find_element(
                 By.XPATH,
-                "//a[contains(text(),'View more comments') or contains(text(),'See more comments')]"
+                "//a[contains(text(),'View more comments') or contains(text(),'See more')]"
             )
-            driver.get(btn.get_attribute("href"))
+            href = more.get_attribute("href")
+            if not href:
+                break
+
+            driver.get(href)
             time.sleep(3)
+
         except:
             break
 
-# ================= EXTRACT COMMENTS =================
-def get_comments(driver):
-    data = []
 
-    # each comment block
-    comments = driver.find_elements(By.XPATH, "//div[contains(@id,'comment')]")
-    for c in comments:
+# ================= LOAD ALL REPLIES =================
+def expand_all_replies(driver):
+    for _ in range(15):
         try:
-            text = c.text.strip()
-        except:
-            text = ""
-
-        # look for reply blocks under this comment
-        replies = []
-        try:
-            reply_elems = c.find_elements(
-                By.XPATH, ".//div[contains(@id,'comment') and contains(@data-sigil,'comment-reply')]"
+            reply_links = driver.find_elements(
+                By.XPATH,
+                "//a[contains(text(),'Reply') or contains(text(),'repl')]"
             )
-            for r in reply_elems:
-                replies.append(r.text.strip())
+
+            if not reply_links:
+                break
+
+            for link in reply_links:
+                href = link.get_attribute("href")
+                if href:
+                    driver.get(href)
+                    time.sleep(2)
         except:
-            pass
+            break
 
-        data.append({
-            "comment": text,
-            "replies": replies
-        })
 
-    return data
+# ================= PARSE COMMENTS + REPLIES =================
+def parse_comments_and_replies(body_text):
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
 
-# ================= EXCEL =================
-def save_excel(data):
-    wb = Workbook()
-    ws = wb.active
-    ws.title = "FB Comments"
+    ignore_words = {
+        "like", "reply", "share", "comment",
+        "most relevant", "comments", "write a comment"
+    }
 
-    ws.append(["S.No", "Comment", "Replies"])
-    for c in ws[1]:
-        c.font = Font(bold=True)
+    cleaned = []
+    for line in lines:
+        low = line.lower()
+        if low in ignore_words:
+            continue
+        if re.match(r"\d+[smhdw]$", low):
+            continue
+        if re.match(r"\d+\s+of\s+\d+", low):
+            continue
+        if "view" in low and "reply" in low:
+            continue
+        if low == "edited":
+            continue
+        if line.isdigit():
+            continue
+        cleaned.append(line)
 
-    for idx, item in enumerate(data,1):
-        replies_joined = " || ".join(item['replies'])
-        ws.append([idx, item['comment'], replies_joined])
+    results = []
+    last_parent = ""
 
-    wb.save(OUTPUT)
-    print("Saved >>", OUTPUT)
+    i = 0
+    while i < len(cleaned) - 1:
+        name = cleaned[i]
+        text = cleaned[i + 1]
+
+        if len(name.split()) <= 4 and len(text.split()) > 2:
+            if "replied" in name.lower():
+                commenter = name.replace("replied", "").strip()
+                results.append((commenter, text, "REPLY", last_parent))
+            else:
+                last_parent = name
+                results.append((name, text, "COMMENT", ""))
+            i += 2
+        else:
+            i += 1
+
+    return results
+
 
 # ================= MAIN =================
 def run():
     driver = init_driver()
     load_cookies(driver)
 
-    print("Opening post...")
-    driver.get(POST_URL)
-    time.sleep(5)
+    mbasic_url = to_mbasic(POST_URL)
+    print("Opening:", mbasic_url)
 
-    print("Expanding comments…")
-    expand_comments(driver)
+    driver.get(mbasic_url)
+    time.sleep(6)
 
-    print("Extracting comments…")
-    data = get_comments(driver)
+    load_all_comments(driver, "comments")
+    expand_all_replies(driver)
+    load_all_comments(driver, "after_replies")
 
-    print("Total comments found:", len(data))
-
-    save_excel(data)
-
+    body_text = driver.find_element(By.TAG_NAME, "body").text
     driver.quit()
+
+    parsed = parse_comments_and_replies(body_text)
+
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comments"
+
+    headers = [
+        "Source",
+        "Keyword",
+        "Commentator",
+        "Comment",
+        "Comment Type",
+        "Parent Commentator",
+        "Post URL"
+    ]
+
+    ws.append(headers)
+    for c in ws[1]:
+        c.font = Font(bold=True)
+
+    for name, comment, ctype, parent in parsed:
+        ws.append([
+            SOURCE,
+            KEYWORD,
+            name,
+            comment,
+            ctype,
+            parent,
+            POST_URL
+        ])
+
+    wb.save(OUTPUT_EXCEL)
+
+    print("===================================")
+    print("DONE")
+    print("Rows written:", len(parsed))
+    print("Excel:", OUTPUT_EXCEL)
+    print("Screenshots:", SCREENSHOT_DIR)
+    print("===================================")
+
 
 if __name__ == "__main__":
     run()

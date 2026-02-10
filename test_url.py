@@ -29,7 +29,7 @@ os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_single_post_comments_with_replies_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_single_post_comments_{TIMESTAMP}.xlsx"
 )
 
 
@@ -75,71 +75,13 @@ def load_cookies(driver):
     print("Cookies loaded")
 
 
-# ================= URL HELPERS =================
+# ================= HELPERS =================
 def to_mbasic(url):
-    if "mbasic.facebook.com" in url:
-        return url
     return url.replace("www.facebook.com", "mbasic.facebook.com").replace(
         "photo/?", "photo.php?"
     )
 
 
-# ================= OPEN COMMENT SECTION =================
-def open_comment_section(driver):
-    try:
-        link = driver.find_element(
-            By.XPATH, "//a[text()='Comment' or contains(text(),'Comment')]"
-        )
-        href = link.get_attribute("href")
-        if href:
-            driver.get(href)
-            time.sleep(3)
-    except:
-        pass
-
-
-# ================= LOAD ALL COMMENTS =================
-def load_all_comments(driver, tag):
-    step = 1
-    while True:
-        driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"{tag}_{step:02d}.png")
-        )
-        step += 1
-        try:
-            more = driver.find_element(
-                By.XPATH,
-                "//a[contains(text(),'View more comments') or contains(text(),'See more')]"
-            )
-            href = more.get_attribute("href")
-            if not href:
-                break
-            driver.get(href)
-            time.sleep(3)
-        except:
-            break
-
-
-# ================= LOAD ALL REPLIES =================
-def expand_all_replies(driver):
-    for _ in range(15):
-        try:
-            links = driver.find_elements(
-                By.XPATH,
-                "//a[contains(text(),'Reply') or contains(text(),'repl')]"
-            )
-            if not links:
-                break
-            for l in links:
-                href = l.get_attribute("href")
-                if href:
-                    driver.get(href)
-                    time.sleep(2)
-        except:
-            break
-
-
-# ================= FILTER HELPERS =================
 def is_timestamp(text):
     return bool(re.match(
         r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},\s+\d{4}",
@@ -165,49 +107,60 @@ def has_real_text(text):
     return bool(re.search(r"[A-Za-z]", text))
 
 
-# ================= PARSE COMMENTS =================
-def parse_comments_and_replies(body_text):
-    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
-    results = []
-    last_parent = ""
+# ================= LOAD COMMENTS =================
+def open_comment_section(driver):
+    try:
+        link = driver.find_element(
+            By.XPATH, "//a[text()='Comment' or contains(text(),'Comment')]"
+        )
+        href = link.get_attribute("href")
+        if href:
+            driver.get(href)
+            time.sleep(3)
+    except:
+        pass
 
-    i = 0
-    while i < len(lines) - 1:
-        name = lines[i]
 
-        if (
-            len(name.split()) > 4
-            or is_timestamp(name)
-            or is_ui_noise(name)
-        ):
-            i += 1
-            continue
-
-        j = i + 1
-
-        if j < len(lines) and is_timestamp(lines[j]):
-            j += 1
-        if j >= len(lines):
+def load_all_comments(driver):
+    while True:
+        try:
+            more = driver.find_element(
+                By.XPATH,
+                "//a[contains(text(),'View more comments') or contains(text(),'See more')]"
+            )
+            href = more.get_attribute("href")
+            if not href:
+                break
+            driver.get(href)
+            time.sleep(3)
+        except:
             break
 
-        comment = lines[j]
 
-        if (
-            is_timestamp(comment)
-            or is_ui_noise(comment)
-            or not has_real_text(comment)
-        ):
-            i += 1
+# ================= FINAL STATEFUL PARSER =================
+def parse_comments(body_text):
+    lines = [l.strip() for l in body_text.splitlines() if l.strip()]
+
+    results = []
+    current_name = ""
+
+    for line in lines:
+        # skip junk
+        if is_timestamp(line) or is_ui_noise(line):
             continue
 
-        if "replied" in name.lower():
-            commenter = name.replace("replied", "").strip()
-            results.append((commenter, comment, "REPLY", last_parent))
-        else:
-            last_parent = name
-            results.append((name, comment, "COMMENT", ""))
+        # detect name (Title Case, 2–4 words)
+        if (
+            1 <= len(line.split()) <= 4
+            and has_real_text(line)
+            and line == line.title()
+        ):
+            current_name = line
+            continue
 
-        i = j + 1
+        # detect comment
+        if current_name and has_real_text(line):
+            results.append((current_name, line))
 
     return results
 
@@ -221,14 +174,12 @@ def run():
     time.sleep(5)
 
     open_comment_section(driver)
-    load_all_comments(driver, "comments")
-    expand_all_replies(driver)
-    load_all_comments(driver, "after_replies")
+    load_all_comments(driver)
 
     body_text = driver.find_element(By.TAG_NAME, "body").text
     driver.quit()
 
-    parsed = parse_comments_and_replies(body_text)
+    comments = parse_comments(body_text)
 
     wb = Workbook()
     ws = wb.active
@@ -239,22 +190,26 @@ def run():
         "Keyword",
         "Commentator",
         "Comment",
-        "Comment Type",
-        "Parent Commentator",
         "Post URL"
     ]
     ws.append(headers)
     for c in ws[1]:
         c.font = Font(bold=True)
 
-    for row in parsed:
-        ws.append([SOURCE, KEYWORD, *row, POST_URL])
+    for name, comment in comments:
+        ws.append([
+            SOURCE,
+            KEYWORD,
+            name,
+            comment,
+            POST_URL
+        ])
 
     wb.save(OUTPUT_EXCEL)
 
     print("===================================")
     print("DONE")
-    print("Rows written:", len(parsed))
+    print("Comments extracted:", len(comments))
     print("Excel:", OUTPUT_EXCEL)
     print("===================================")
 

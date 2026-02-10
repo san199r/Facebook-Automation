@@ -130,6 +130,14 @@ def expand_all_replies(driver):
             break
 
 
+# ================= TIMESTAMP CHECK =================
+def is_timestamp(text):
+    return bool(re.match(
+        r"(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\s+\d{1,2},\s+\d{4}",
+        text.lower()
+    ))
+
+
 # ================= PARSE COMMENTS + REPLIES =================
 def parse_comments_and_replies(body_text):
     lines = [l.strip() for l in body_text.splitlines() if l.strip()]
@@ -160,20 +168,37 @@ def parse_comments_and_replies(body_text):
     last_parent = ""
 
     i = 0
-    while i < len(cleaned) - 1:
+    while i < len(cleaned):
         name = cleaned[i]
-        text = cleaned[i + 1]
 
-        if len(name.split()) <= 4 and len(text.split()) > 2:
-            if "replied" in name.lower():
-                commenter = name.replace("replied", "").strip()
-                results.append((commenter, text, "REPLY", last_parent))
-            else:
-                last_parent = name
-                results.append((name, text, "COMMENT", ""))
-            i += 2
-        else:
+        # name sanity check
+        if len(name.split()) > 4:
             i += 1
+            continue
+
+        j = i + 1
+
+        # skip timestamp
+        if j < len(cleaned) and is_timestamp(cleaned[j]):
+            j += 1
+
+        if j >= len(cleaned):
+            break
+
+        comment_text = cleaned[j]
+
+        if len(comment_text.split()) < 2:
+            i += 1
+            continue
+
+        if "replied" in name.lower():
+            commenter = name.replace("replied", "").strip()
+            results.append((commenter, comment_text, "REPLY", last_parent))
+        else:
+            last_parent = name
+            results.append((name, comment_text, "COMMENT", ""))
+
+        i = j + 1
 
     return results
 

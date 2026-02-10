@@ -1,7 +1,6 @@
 import os
 import time
 from datetime import datetime
-from urllib.parse import urlparse
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -10,24 +9,19 @@ from selenium import webdriver
 from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.common.by import By
+from selenium.common.exceptions import StaleElementReferenceException
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
 KEYWORD = "probate"
 
-SEARCH_URLS = {
-    "posts": f"https://mbasic.facebook.com/search/posts/?q={KEYWORD}",
-}
+SEARCH_URL = f"https://mbasic.facebook.com/search/top/?q={KEYWORD}"
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
-SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
-
 os.makedirs(OUTPUT_DIR, exist_ok=True)
-os.makedirs(SCREENSHOT_DIR, exist_ok=True)
-os.makedirs("cookies", exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
@@ -38,10 +32,16 @@ OUTPUT_EXCEL = os.path.join(
 # ================= DRIVER =================
 def init_driver():
     options = Options()
-    options.add_argument("--window-size=412,915")
+    options.add_argument("--window-size=412,915")   # mobile viewport
     options.add_argument("--disable-notifications")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--lang=en-US")
+    options.add_argument(
+        "user-agent=Mozilla/5.0 (Linux; Android 10) "
+        "AppleWebKit/537.36 (KHTML, like Gecko) "
+        "Chrome/120.0.0.0 Mobile Safari/537.36"
+    )
 
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -52,7 +52,7 @@ def init_driver():
 # ================= LOAD COOKIES =================
 def load_cookies(driver):
     driver.get("https://mbasic.facebook.com/")
-    time.sleep(4)
+    time.sleep(3)
 
     if not os.path.exists(COOKIE_FILE):
         print("[WARN] Cookie file not found")
@@ -66,59 +66,53 @@ def load_cookies(driver):
                     driver.add_cookie({
                         "name": parts[5],
                         "value": parts[6],
-                        "domain": ".facebook.com"   # ✅ FIXED
+                        "domain": ".facebook.com"
                     })
 
     driver.refresh()
-    time.sleep(5)
+    time.sleep(4)
     print("[INFO] Cookies loaded")
 
 
-# ================= URL NORMALIZER =================
-def clean_post_url(url):
-    if not url:
-        return None
-
-    if "/posts/" in url:
-        return url.split("?")[0]
-
-    if "photo.php?fbid=" in url:
-        return url.split("&")[0]
-
-    if "permalink.php" in url:
-        return url.split("&")[0]
-
-    return None
-
-
-# ================= COLLECT POSTS =================
-def collect_post_urls(driver, scrolls=15):
+# ================= COLLECT POSTS (PAGINATION ONLY) =================
+def collect_post_urls(driver, max_pages=20):
     post_urls = set()
+    page = 1
 
-    for i in range(scrolls):
-        print(f"[SCROLL] {i + 1}/{scrolls}")
+    while page <= max_pages:
+        print(f"[PAGE] {page}/{max_pages}")
+        time.sleep(3)
 
         links = driver.find_elements(By.XPATH, "//a[@href]")
+        next_page = None
+
         for a in links:
-            href = a.get_attribute("href")
+            try:
+                href = a.get_attribute("href")
+            except StaleElementReferenceException:
+                continue
+
             if not href:
                 continue
 
+            # ✅ POST URLS
             if (
-                "/posts/" in href
+                "story.php?story_fbid=" in href
+                or "/posts/" in href
                 or "photo.php?fbid=" in href
-                or "permalink.php" in href
             ):
-                clean = clean_post_url(href)
-                if clean:
-                    post_urls.add(clean)
+                post_urls.add(href.split("&")[0])
 
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(3)
+            # ✅ PAGINATION (LANGUAGE-INDEPENDENT)
+            if "/search/top/" in href and "cursor=" in href:
+                next_page = href
 
-        driver.save_screenshot(
-            os.path.join(SCREENSHOT_DIR, f"scroll_{i+1:02d}.png")
-        )
+        if not next_page:
+            print("[INFO] No more pages")
+            break
+
+        driver.get(next_page)
+        page += 1
 
     return post_urls
 
@@ -128,16 +122,12 @@ def run():
     driver = init_driver()
     load_cookies(driver)
 
-    all_posts = set()
-
     try:
-        for name, url in SEARCH_URLS.items():
-            print(f"[OPEN] {name.upper()} SEARCH")
-            driver.get(url)
-            time.sleep(5)
+        print("[OPEN] SEARCH PAGE")
+        driver.get(SEARCH_URL)
+        time.sleep(5)
 
-            urls = collect_post_urls(driver)
-            all_posts.update(urls)
+        posts = collect_post_urls(driver)
 
         wb = Workbook()
         ws = wb.active
@@ -147,13 +137,13 @@ def run():
         for c in ws[1]:
             c.font = Font(bold=True)
 
-        for i, u in enumerate(sorted(all_posts), 1):
-            ws.append([i, u])
+        for i, url in enumerate(sorted(posts), 1):
+            ws.append([i, url])
 
         wb.save(OUTPUT_EXCEL)
 
         print("===================================")
-        print("TOTAL UNIQUE POSTS:", len(all_posts))
+        print("TOTAL UNIQUE POSTS:", len(posts))
         print("EXCEL:", OUTPUT_EXCEL)
         print("===================================")
 

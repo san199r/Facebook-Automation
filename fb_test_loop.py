@@ -13,20 +13,18 @@ from webdriver_manager.chrome import ChromeDriverManager
 KEYWORD = "probate"
 SOURCE = "Facebook"
 
-INPUT_EXCEL = "facebook.xlsx"
-FINAL_EXCEL = "fb_comments_final_90.xlsx"
+INPUT_EXCEL = "facebook_fixed.xlsx"
+FINAL_EXCEL = "fb_comments_final.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 MAX_POSTS = 20
-SCROLL_COUNT = 9
+SCROLL_COUNT = 5
 
 # ================= DRIVER =================
 def init_driver():
     options = Options()
     options.add_argument("--disable-notifications")
     options.add_argument("--window-size=1200,900")
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
     options.add_argument("--disable-blink-features=AutomationControlled")
 
     return webdriver.Chrome(
@@ -62,7 +60,6 @@ def load_driver_with_cookies():
 
     driver.refresh()
     time.sleep(5)
-
     print("Cookies loaded successfully")
     return driver
 
@@ -72,6 +69,9 @@ def read_post_urls():
     ws = wb.active
 
     headers = [c.value for c in ws[1]]
+    if "Post URL" not in headers:
+        raise Exception("Post URL column not found!")
+
     col = headers.index("Post URL") + 1
 
     urls = []
@@ -80,17 +80,18 @@ def read_post_urls():
             break
         val = row[col - 1].value
         if val:
-            urls.append(val)
+            urls.append(str(val).strip())
 
+    print(f"Total URLs Loaded: {len(urls)}")
     return urls
 
-# ================= SCROLL COMMENTS =================
+# ================= SCROLL =================
 def scroll_comments(driver):
     for _ in range(SCROLL_COUNT):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
 
-# ================= EXPAND MORE COMMENTS =================
+# ================= CLICK MORE =================
 def expand_more_comments(driver):
     try:
         links = driver.find_elements(By.XPATH, "//a[contains(text(),'View more comments')]")
@@ -103,7 +104,7 @@ def expand_more_comments(driver):
     except:
         pass
 
-# ================= GET FBID =================
+# ================= FBID EXTRACTION =================
 def extract_fbid(post_url):
     match = re.search(r"fbid=(\d+)", post_url)
     if match:
@@ -185,7 +186,7 @@ def run():
     for i, url in enumerate(post_urls, start=1):
         print(f"Processing {i}/{len(post_urls)}")
         extract_comments(driver, url, ws)
-        time.sleep(5)  # avoid block
+        time.sleep(5)
 
     wb.save(FINAL_EXCEL)
     print("EXCEL SAVED:", FINAL_EXCEL)

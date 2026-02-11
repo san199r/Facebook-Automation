@@ -1,5 +1,6 @@
 import os
 import time
+import sys
 from openpyxl import load_workbook
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -11,11 +12,26 @@ from webdriver_manager.chrome import ChromeDriverManager
 INPUT_EXCEL = "clean_posts.xlsx"
 COOKIE_FILE = "cookies/facebook_cookies.txt"
 
+# ================= FORCE UTF-8 OUTPUT =================
+try:
+    sys.stdout.reconfigure(encoding='utf-8')
+except:
+    pass
+
+# ================= SAFE PRINT =================
+def safe_print(text):
+    try:
+        print(text)
+    except UnicodeEncodeError:
+        print(text.encode("ascii", errors="ignore").decode())
+
 # ================= DRIVER =================
 def init_driver():
     options = Options()
     options.add_argument("--disable-notifications")
     options.add_argument("--start-maximized")
+    options.add_argument("--disable-blink-features=AutomationControlled")
+
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
@@ -67,7 +83,7 @@ def read_urls():
     print("Total Posts:", len(urls))
     return urls
 
-# ================= LOAD ALL COMMENTS =================
+# ================= EXPAND COMMENTS =================
 def expand_comments(driver):
     while True:
         try:
@@ -80,21 +96,21 @@ def expand_comments(driver):
 # ================= EXTRACT COMMENTS =================
 def extract_comments(driver, post_url):
 
-    print("\n==============================")
+    print("\n========================================")
     print("Opening Post:", post_url)
-    print("==============================")
+    print("========================================")
 
     driver.get(post_url)
     time.sleep(6)
 
-    # Scroll to load comments
+    # Scroll down multiple times
     for _ in range(5):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(3)
 
     expand_comments(driver)
 
-    # JS Extraction (Working method)
+    # Extract comment blocks via JS
     comments = driver.execute_script("""
         let results = [];
         document.querySelectorAll('div[dir="auto"]').forEach(el => {
@@ -109,25 +125,25 @@ def extract_comments(driver, post_url):
 
     for i, c in enumerate(comments, 1):
         print(f"\n--- Comment {i} ---")
-        print(c)
+        safe_print(c)
 
 # ================= MAIN =================
 def run():
     driver = init_driver()
 
-    # Login via cookies
+    # Login using cookies
     load_cookies(driver)
 
-    # Read posts
+    # Read URLs
     urls = read_urls()
 
-    # Loop posts
+    # Loop through posts
     for i, url in enumerate(urls, 1):
         print(f"\nProcessing {i}/{len(urls)}")
         extract_comments(driver, url)
         time.sleep(5)
 
-    print("\nAll posts processed.")
+    print("\nAll posts processed successfully.")
     driver.quit()
 
 if __name__ == "__main__":

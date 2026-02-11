@@ -1,6 +1,9 @@
 import os
 import time
-from openpyxl import Workbook, load_workbook
+import json
+from datetime import datetime
+
+from openpyxl import Workbook
 from openpyxl.styles import Font
 
 from selenium import webdriver
@@ -13,7 +16,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 
 # ================= CONFIG =================
 COOKIE_FILE = "cookies/facebook_cookies.txt"
-POSTS_FILE = "facebook_posts_input.xlsx"
+POSTS_FILE = "facebook_posts_input.xlsx"   # Excel with Post URLs in column C
 OUTPUT_FILE = "fb_comments_structured.xlsx"
 
 
@@ -22,9 +25,7 @@ def init_driver():
     options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
     options.add_argument("--disable-blink-features=AutomationControlled")
-    options.add_argument("--headless=new")  # Jenkins safe
-    options.add_argument("--no-sandbox")
-    options.add_argument("--disable-dev-shm-usage")
+    options.add_argument("--headless=new")  # Required for Jenkins
 
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -32,37 +33,22 @@ def init_driver():
     )
 
 
-# ================= LOAD NETSCAPE COOKIES =================
-def load_netscape_cookies(driver):
+# ================= COOKIE LOGIN =================
+def load_cookies(driver):
     print("Opening Facebook homepage...")
     driver.get("https://www.facebook.com/")
     time.sleep(3)
 
-    print("Injecting Netscape cookies...")
+    print("Loading cookies...")
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        cookies = json.load(f)
 
-    with open(COOKIE_FILE, "r", encoding="utf-8") as file:
-        for line in file:
-            if line.startswith("#") or not line.strip():
-                continue
-
-            parts = line.strip().split("\t")
-            if len(parts) != 7:
-                continue
-
-            domain, flag, path, secure, expiry, name, value = parts
-
-            cookie_dict = {
-                "domain": domain,
-                "name": name,
-                "value": value,
-                "path": path,
-                "secure": True if secure.upper() == "TRUE" else False,
-            }
-
-            try:
-                driver.add_cookie(cookie_dict)
-            except Exception:
-                continue
+    for cookie in cookies:
+        cookie.pop("sameSite", None)
+        try:
+            driver.add_cookie(cookie)
+        except Exception:
+            continue
 
     driver.refresh()
     time.sleep(5)
@@ -72,6 +58,8 @@ def load_netscape_cookies(driver):
 
 # ================= LOAD POST URLS =================
 def load_post_urls():
+    from openpyxl import load_workbook
+
     wb = load_workbook(POSTS_FILE)
     ws = wb.active
 
@@ -87,7 +75,7 @@ def load_post_urls():
 def scroll_comments(driver):
     last_height = driver.execute_script("return document.body.scrollHeight")
 
-    for _ in range(10):
+    for _ in range(8):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
@@ -142,18 +130,18 @@ def extract_comments(driver):
     return comments
 
 
-# ================= INIT OUTPUT =================
+# ================= INIT OUTPUT FILE =================
 def init_output():
     wb = Workbook()
     ws = wb.active
     ws.title = "Comments"
 
     headers = ["Post URL", "Comment"]
-    bold = Font(bold=True)
 
+    bold = Font(bold=True)
     for col, header in enumerate(headers, start=1):
+        ws.cell(1, col, header).font = bold
         ws.cell(1, col, header).value = header
-        ws.cell(1, col).font = bold
 
     wb.save(OUTPUT_FILE)
     return wb, ws
@@ -167,7 +155,7 @@ def main():
         wb, ws = init_output()
         driver = init_driver()
 
-        load_netscape_cookies(driver)
+        load_cookies(driver)
 
         post_urls = load_post_urls()
         print("Total Posts:", len(post_urls))
@@ -182,8 +170,8 @@ def main():
             time.sleep(4)
 
             if "login" in driver.current_url:
-                print("Not logged in. Cookie expired.")
-                break
+                print("Not logged in. Skipping post.")
+                continue
 
             comments = extract_comments(driver)
             print("Extracted:", len(comments))

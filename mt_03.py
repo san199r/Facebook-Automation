@@ -1,182 +1,194 @@
 import os
 import time
-import sys
-import pandas as pd
-from openpyxl import load_workbook
+import json
+from datetime import datetime
+
+from openpyxl import Workbook
+from openpyxl.styles import Font
+
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.chrome.options import Options
 from selenium.webdriver.chrome.service import Service
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
 from webdriver_manager.chrome import ChromeDriverManager
 
+
 # ================= CONFIG =================
-INPUT_EXCEL = "clean_posts.xlsx"
-OUTPUT_EXCEL = "fb_comments_structured.xlsx"
-COOKIE_FILE = "cookies/facebook_cookies.txt"
+COOKIE_FILE = "cookies/facebook_cookies.json"
+POSTS_FILE = "facebook_posts_input.xlsx"   # Excel with Post URLs in column C
+OUTPUT_FILE = "fb_comments_structured.xlsx"
 
-FILTER_KEYWORD = ""   # put "probate" if you want filtering
-
-# ================= UTF-8 FIX =================
-try:
-    sys.stdout.reconfigure(encoding='utf-8')
-except:
-    pass
-
-# ================= SAFE PRINT =================
-def safe_print(text):
-    try:
-        print(text)
-    except:
-        print(text.encode("ascii", errors="ignore").decode())
 
 # ================= DRIVER =================
 def init_driver():
-    options = Options()
+    options = webdriver.ChromeOptions()
     options.add_argument("--disable-notifications")
-    options.add_argument("--start-maximized")
     options.add_argument("--disable-blink-features=AutomationControlled")
+    options.add_argument("--headless=new")  # Required for Jenkins
 
     return webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
     )
 
-# ================= LOAD COOKIES =================
+
+# ================= COOKIE LOGIN =================
 def load_cookies(driver):
+    print("Opening Facebook homepage...")
     driver.get("https://www.facebook.com/")
-    time.sleep(5)
+    time.sleep(3)
 
-    if not os.path.exists(COOKIE_FILE):
-        print("Cookie file not found!")
-        return
+    print("Loading cookies...")
+    with open(COOKIE_FILE, "r", encoding="utf-8") as f:
+        cookies = json.load(f)
 
-    with open(COOKIE_FILE, "r", encoding="utf-8", errors="ignore") as file:
-        for line in file:
-            if line.startswith("#") or not line.strip():
-                continue
-
-            parts = line.strip().split("\t")
-            if len(parts) >= 7:
-                cookie = {
-                    "domain": parts[0],
-                    "name": parts[5],
-                    "value": parts[6],
-                    "path": parts[2],
-                }
-                try:
-                    driver.add_cookie(cookie)
-                except:
-                    pass
+    for cookie in cookies:
+        cookie.pop("sameSite", None)
+        try:
+            driver.add_cookie(cookie)
+        except Exception:
+            continue
 
     driver.refresh()
     time.sleep(5)
 
-    print("Login URL:", driver.current_url)
+    print("Current URL after cookie load:", driver.current_url)
 
-# ================= READ POST URLS =================
-def read_urls():
-    wb = load_workbook(INPUT_EXCEL)
+
+# ================= LOAD POST URLS =================
+def load_post_urls():
+    from openpyxl import load_workbook
+
+    wb = load_workbook(POSTS_FILE)
     ws = wb.active
 
     urls = []
     for row in ws.iter_rows(min_row=2, values_only=True):
-        if row[0]:
-            urls.append(row[0])
+        if row[2]:
+            urls.append(row[2])
 
-    print("Total Posts:", len(urls))
     return urls
 
-# ================= EXPAND COMMENTS =================
-def expand_comments(driver):
-    while True:
-        try:
-            more = driver.find_element(By.XPATH, "//span[contains(text(),'View more comments')]")
-            driver.execute_script("arguments[0].click();", more)
-            time.sleep(2)
-        except:
-            break
 
-# ================= EXTRACT STRUCTURED COMMENTS =================
-def extract_comments(driver, post_url):
+# ================= SCROLL COMMENTS =================
+def scroll_comments(driver):
+    last_height = driver.execute_script("return document.body.scrollHeight")
 
-    print("\nOpening:", post_url)
-
-    driver.get(post_url)
-    time.sleep(6)
-
-    for _ in range(5):
+    for _ in range(8):
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(2)
 
-    expand_comments(driver)
+        new_height = driver.execute_script("return document.body.scrollHeight")
+        if new_height == last_height:
+            break
+        last_height = new_height
 
-    # JS structured extraction
-    comments = driver.execute_script("""
-        let results = [];
-        document.querySelectorAll('[aria-label="Comment"]').forEach(block => {
 
-            let name = "";
-            let text = "";
+# ================= EXPAND SEE MORE =================
+def expand_see_more(driver):
+    buttons = driver.find_elements(
+        By.XPATH,
+        "//div[@role='button']//span[contains(text(),'See more')]"
+    )
 
-            let anchor = block.querySelector("a");
-            if(anchor){
-                name = anchor.innerText;
-            }
+    for b in buttons:
+        try:
+            driver.execute_script("arguments[0].click();", b)
+            time.sleep(0.3)
+        except Exception:
+            continue
 
-            let textDiv = block.querySelector('div[dir="auto"]');
-            if(textDiv){
-                text = textDiv.innerText;
-            }
 
-            if(name && text){
-                results.push({name: name, comment: text});
-            }
-        });
-        return results;
-    """)
+# ================= EXTRACT COMMENTS =================
+def extract_comments(driver):
+    comments = set()
 
-    print("Extracted:", len(comments))
+    try:
+        WebDriverWait(driver, 15).until(
+            EC.presence_of_element_located((By.XPATH, "//div[@role='article']"))
+        )
+    except Exception:
+        return comments
+
+    scroll_comments(driver)
+    expand_see_more(driver)
+
+    comment_elements = driver.find_elements(
+        By.XPATH,
+        "//div[@role='article']//div[@dir='auto']"
+    )
+
+    for c in comment_elements:
+        try:
+            text = c.text.strip()
+            if len(text) > 5:
+                comments.add(text)
+        except Exception:
+            continue
 
     return comments
 
+
+# ================= INIT OUTPUT FILE =================
+def init_output():
+    wb = Workbook()
+    ws = wb.active
+    ws.title = "Comments"
+
+    headers = ["Post URL", "Comment"]
+
+    bold = Font(bold=True)
+    for col, header in enumerate(headers, start=1):
+        ws.cell(1, col, header).font = bold
+        ws.cell(1, col, header).value = header
+
+    wb.save(OUTPUT_FILE)
+    return wb, ws
+
+
 # ================= MAIN =================
-def run():
-    driver = init_driver()
-    load_cookies(driver)
+def main():
+    driver = None
 
-    urls = read_urls()
+    try:
+        wb, ws = init_output()
+        driver = init_driver()
 
-    all_data = []
+        load_cookies(driver)
 
-    for i, url in enumerate(urls, 1):
-        print(f"Processing {i}/{len(urls)}")
+        post_urls = load_post_urls()
+        print("Total Posts:", len(post_urls))
 
-        comments = extract_comments(driver, url)
+        total_comments = 0
 
-        for c in comments:
-            if FILTER_KEYWORD:
-                if FILTER_KEYWORD.lower() not in c["comment"].lower():
-                    continue
+        for i, url in enumerate(post_urls, start=1):
+            print(f"Processing {i}/{len(post_urls)}")
+            print("Opening:", url)
 
-            all_data.append({
-                "Post URL": url,
-                "Commenter Name": c["name"],
-                "Comment Text": c["comment"]
-            })
+            driver.get(url)
+            time.sleep(4)
 
-        time.sleep(3)
+            if "login" in driver.current_url:
+                print("Not logged in. Skipping post.")
+                continue
 
-    driver.quit()
+            comments = extract_comments(driver)
+            print("Extracted:", len(comments))
 
-    # Remove duplicates
-    df = pd.DataFrame(all_data)
-    df.drop_duplicates(inplace=True)
+            for comment in comments:
+                ws.append([url, comment])
+                total_comments += 1
 
-    df.to_excel(OUTPUT_EXCEL, index=False)
+            wb.save(OUTPUT_FILE)
 
-    print("\nSaved:", OUTPUT_EXCEL)
-    print("Total Unique Comments:", len(df))
+        print("Saved:", OUTPUT_FILE)
+        print("Total Unique Comments:", total_comments)
+
+    finally:
+        if driver:
+            driver.quit()
 
 
 if __name__ == "__main__":
-    run()
+    main()

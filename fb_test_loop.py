@@ -13,7 +13,7 @@ from webdriver_manager.chrome import ChromeDriverManager
 KEYWORD = "probate"
 SOURCE = "Facebook"
 
-INPUT_EXCEL = "output/facebook.xlsx"
+INPUT_EXCEL = "facebook.xlsx"
 FINAL_EXCEL = "fb_comments_final_90.xlsx"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 

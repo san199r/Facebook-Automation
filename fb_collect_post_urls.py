@@ -17,8 +17,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ================= CONFIG =================
 KEYWORD = "probate"
 
-# ✅ RECENT POSTS SEARCH
-SEARCH_URL = f"https://mbasic.facebook.com/search/posts/?q={KEYWORD}&filters=recent"
+# ✅ Normal Facebook Search (Recent)
+SEARCH_URL = f"https://www.facebook.com/search/posts/?q={KEYWORD}&filters=recent"
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
@@ -34,27 +34,34 @@ OUTPUT_EXCEL = os.path.join(
 # ================= DRIVER =================
 def init_driver():
     options = Options()
-    options.add_argument("--window-size=412,915")
+
+    # ✅ JENKINS SAFE OPTIONS
+    options.add_argument("--headless=new")
+    options.add_argument("--start-maximized")
     options.add_argument("--disable-notifications")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--lang=en-US")
-    options.add_argument(
-        "user-agent=Mozilla/5.0 (Linux; Android 10) "
-        "AppleWebKit/537.36 (KHTML, like Gecko) "
-        "Chrome/120.0.0.0 Mobile Safari/537.36"
-    )
+    options.add_argument("--disable-blink-features=AutomationControlled")
 
-    return webdriver.Chrome(
+    options.add_experimental_option("excludeSwitches", ["enable-automation"])
+    options.add_experimental_option("useAutomationExtension", False)
+
+    driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
         options=options
     )
 
+    driver.execute_script(
+        "Object.defineProperty(navigator, 'webdriver', {get: () => undefined})"
+    )
+
+    return driver
+
 
 # ================= LOAD COOKIES =================
 def load_cookies(driver):
-    driver.get("https://mbasic.facebook.com/")
-    time.sleep(3)
+    driver.get("https://www.facebook.com/")
+    time.sleep(5)
 
     if not os.path.exists(COOKIE_FILE):
         print("[WARN] Cookie file not found")
@@ -65,14 +72,17 @@ def load_cookies(driver):
             if line.strip() and not line.startswith("#"):
                 parts = line.strip().split("\t")
                 if len(parts) >= 7:
-                    driver.add_cookie({
-                        "name": parts[5],
-                        "value": parts[6],
-                        "domain": ".facebook.com"
-                    })
+                    try:
+                        driver.add_cookie({
+                            "name": parts[5],
+                            "value": parts[6],
+                            "domain": ".facebook.com"
+                        })
+                    except:
+                        pass
 
     driver.refresh()
-    time.sleep(4)
+    time.sleep(5)
     print("[INFO] Cookies loaded")
 
 
@@ -81,26 +91,24 @@ def clean_post_url(url):
     if not url:
         return None
 
-    parsed = urlparse(url)
-    clean = parsed.scheme + "://" + parsed.netloc + parsed.path
-
-    if "story.php" in url and "story_fbid" in url:
+    if "story_fbid" in url:
         return url.split("&")[0]
 
-    return clean
+    parsed = urlparse(url)
+    return parsed.scheme + "://" + parsed.netloc + parsed.path
 
 
 # ================= COLLECT POSTS =================
-def collect_post_urls(driver, max_pages=60):
+def collect_post_urls(driver, max_scrolls=30):
     post_urls = set()
-    page = 1
 
-    while page <= max_pages:
-        print(f"[PAGE] {page}/{max_pages}")
+    last_height = driver.execute_script("return document.body.scrollHeight")
+
+    for i in range(max_scrolls):
+        print(f"[SCROLL] {i+1}/{max_scrolls}")
         time.sleep(3)
 
         links = driver.find_elements(By.XPATH, "//a[@href]")
-        next_page = None
 
         for a in links:
             try:
@@ -111,27 +119,26 @@ def collect_post_urls(driver, max_pages=60):
             if not href:
                 continue
 
-            # ✅ POST URL DETECTION
             if (
                 "story.php?story_fbid=" in href
                 or "/posts/" in href
-                or "photo.php?fbid=" in href
+                or "/permalink/" in href
             ):
                 cleaned = clean_post_url(href)
                 if cleaned:
                     post_urls.add(cleaned)
 
-            # ✅ GENERIC PAGINATION DETECTION
-            if "/search/" in href and "cursor=" in href:
-                next_page = href
+        # Scroll down
+        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
+        time.sleep(3)
 
-        if not next_page:
-            print("[INFO] No more pages found")
+        new_height = driver.execute_script("return document.body.scrollHeight")
+
+        if new_height == last_height:
+            print("[INFO] No more scroll content")
             break
 
-        print("[NEXT PAGE]")
-        driver.get(next_page)
-        page += 1
+        last_height = new_height
 
     return post_urls
 
@@ -144,7 +151,7 @@ def run():
     try:
         print("[OPEN] SEARCH PAGE")
         driver.get(SEARCH_URL)
-        time.sleep(5)
+        time.sleep(8)
 
         posts = collect_post_urls(driver)
 

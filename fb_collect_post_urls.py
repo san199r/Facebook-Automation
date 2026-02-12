@@ -1,6 +1,7 @@
 import os
 import time
 from datetime import datetime
+from urllib.parse import urlparse
 
 from openpyxl import Workbook
 from openpyxl.styles import Font
@@ -16,7 +17,8 @@ from webdriver_manager.chrome import ChromeDriverManager
 # ================= CONFIG =================
 KEYWORD = "probate"
 
-SEARCH_URL = f"https://mbasic.facebook.com/search/top/?q={KEYWORD}"
+# ✅ RECENT POSTS SEARCH
+SEARCH_URL = f"https://mbasic.facebook.com/search/posts/?q={KEYWORD}&filters=recent"
 
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
@@ -25,14 +27,14 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
 OUTPUT_EXCEL = os.path.join(
-    OUTPUT_DIR, f"fb_{KEYWORD}_ALL_posts_{TIMESTAMP}.xlsx"
+    OUTPUT_DIR, f"fb_{KEYWORD}_RECENT_posts_{TIMESTAMP}.xlsx"
 )
 
 
 # ================= DRIVER =================
 def init_driver():
     options = Options()
-    options.add_argument("--window-size=412,915")   # mobile viewport
+    options.add_argument("--window-size=412,915")
     options.add_argument("--disable-notifications")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
@@ -74,8 +76,22 @@ def load_cookies(driver):
     print("[INFO] Cookies loaded")
 
 
-# ================= COLLECT POSTS (PAGINATION ONLY) =================
-def collect_post_urls(driver, max_pages=20):
+# ================= CLEAN URL =================
+def clean_post_url(url):
+    if not url:
+        return None
+
+    parsed = urlparse(url)
+    clean = parsed.scheme + "://" + parsed.netloc + parsed.path
+
+    if "story.php" in url and "story_fbid" in url:
+        return url.split("&")[0]
+
+    return clean
+
+
+# ================= COLLECT POSTS =================
+def collect_post_urls(driver, max_pages=60):
     post_urls = set()
     page = 1
 
@@ -95,22 +111,25 @@ def collect_post_urls(driver, max_pages=20):
             if not href:
                 continue
 
-            # ✅ POST URLS
+            # ✅ POST URL DETECTION
             if (
                 "story.php?story_fbid=" in href
                 or "/posts/" in href
                 or "photo.php?fbid=" in href
             ):
-                post_urls.add(href.split("&")[0])
+                cleaned = clean_post_url(href)
+                if cleaned:
+                    post_urls.add(cleaned)
 
-            # ✅ PAGINATION (LANGUAGE-INDEPENDENT)
-            if "/search/top/" in href and "cursor=" in href:
+            # ✅ GENERIC PAGINATION DETECTION
+            if "/search/" in href and "cursor=" in href:
                 next_page = href
 
         if not next_page:
-            print("[INFO] No more pages")
+            print("[INFO] No more pages found")
             break
 
+        print("[NEXT PAGE]")
         driver.get(next_page)
         page += 1
 

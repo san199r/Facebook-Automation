@@ -4,18 +4,17 @@ from datetime import datetime
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
+from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
 KEYWORD = "probate"
-SEARCH_URL = f"https://www.facebook.com/search/posts/?q={KEYWORD}"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
 SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
-
 os.makedirs(SCREENSHOT_DIR, exist_ok=True)
 
 TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
@@ -28,7 +27,9 @@ def init_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # options.add_argument("--headless=new")  # Enable in Jenkins
+    # For Jenkins:
+    # options.add_argument("--headless=new")
+    # options.add_argument("--window-size=1920,3000")
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -39,23 +40,11 @@ def init_driver():
     return driver
 
 
-# ================= FULL PAGE SCREENSHOT =================
+# ================= SCREENSHOT =================
 def take_screenshot(driver, name):
-    try:
-        # Resize window to full page height
-        total_height = driver.execute_script(
-            "return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);"
-        )
-        driver.set_window_size(1920, total_height)
-
-        path = os.path.join(
-            SCREENSHOT_DIR, f"{name}_{TIMESTAMP}.png"
-        )
-        driver.save_screenshot(path)
-        print(f"Screenshot saved: {path}")
-
-    except Exception as e:
-        print("Screenshot error:", e)
+    path = os.path.join(SCREENSHOT_DIR, f"{name}_{TIMESTAMP}.png")
+    driver.save_screenshot(path)
+    print("Screenshot saved:", path)
 
 
 # ================= LOAD COOKIES =================
@@ -95,6 +84,31 @@ def load_cookies(driver):
 
     take_screenshot(driver, "after_cookies")
     return True
+
+
+# ================= SEARCH USING SEARCH BOX =================
+def search_keyword(driver):
+    print("Searching for:", KEYWORD)
+
+    search_box = driver.find_element(By.XPATH, "//input[@type='search']")
+    search_box.clear()
+    search_box.send_keys(KEYWORD)
+    search_box.send_keys(Keys.ENTER)
+
+    time.sleep(8)
+    take_screenshot(driver, "after_search")
+
+    # Click "Posts" tab
+    try:
+        posts_tab = driver.find_element(
+            By.XPATH,
+            "//a[contains(@href,'/search/posts') or contains(text(),'Posts')]"
+        )
+        posts_tab.click()
+        time.sleep(6)
+        take_screenshot(driver, "after_posts_tab")
+    except:
+        print("Posts tab not found (continuing).")
 
 
 # ================= COLLECT POSTS =================
@@ -141,15 +155,11 @@ def run():
         if not load_cookies(driver):
             return
 
-        print("Opening search page...")
-        driver.get(SEARCH_URL)
-        time.sleep(8)
-
-        take_screenshot(driver, "after_search")
+        search_keyword(driver)
 
         posts = collect_posts(driver)
 
-        print("\n===== POSTS FOUND =====\n")
+        print("\n========== POSTS FOUND ==========\n")
         for i, url in enumerate(sorted(posts), start=1):
             print(f"{i}. {url}")
 

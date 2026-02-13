@@ -28,7 +28,7 @@ def init_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
-    # Recommended for Jenkins
+    # For Jenkins (recommended)
     # options.add_argument("--headless=new")
     # options.add_argument("--window-size=412,915")
 
@@ -48,13 +48,14 @@ def take_screenshot(driver, name):
     print("Screenshot saved:", path)
 
 
-# ================= LOAD COOKIES =================
+# ================= LOAD COOKIES (FIXED) =================
 def load_cookies(driver):
     if not os.path.exists(COOKIE_FILE):
-        print("Cookie file not found.")
+        print("❌ Cookie file not found.")
         return False
 
-    driver.get("https://mbasic.facebook.com/")
+    print("Opening main Facebook site...")
+    driver.get("https://www.facebook.com/")
     time.sleep(5)
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
@@ -71,9 +72,12 @@ def load_cookies(driver):
             cookie = {
                 "name": name,
                 "value": value,
-                "domain": ".facebook.com",
-                "path": "/"
+                "path": "/",
             }
+
+            # Add expiry if valid
+            if expiry.isdigit() and int(expiry) > 0:
+                cookie["expiry"] = int(expiry)
 
             try:
                 driver.add_cookie(cookie)
@@ -81,9 +85,17 @@ def load_cookies(driver):
                 continue
 
     driver.refresh()
-    time.sleep(5)
+    time.sleep(6)
 
+    print("Current URL after login:", driver.current_url)
+
+    if "login" in driver.current_url.lower():
+        print("❌ Login failed. Cookies expired.")
+        return False
+
+    print("✅ Login successful.")
     take_screenshot(driver, "after_cookies")
+
     return True
 
 
@@ -94,7 +106,10 @@ def collect_posts(driver, max_pages=5):
     for page in range(max_pages):
         print(f"Processing page {page+1}/{max_pages}")
 
-        links = driver.find_elements(By.XPATH, "//a[contains(@href,'/story.php') or contains(@href,'/posts/')]")
+        links = driver.find_elements(
+            By.XPATH,
+            "//a[contains(@href,'story.php') or contains(@href,'/posts/')]"
+        )
 
         for a in links:
             href = a.get_attribute("href")
@@ -102,9 +117,12 @@ def collect_posts(driver, max_pages=5):
                 clean = href.split("&")[0]
                 post_urls.add(clean)
 
-        # Try clicking "See more results"
+        # Click "See more results"
         try:
-            more_btn = driver.find_element(By.XPATH, "//a[contains(text(),'See more results')]")
+            more_btn = driver.find_element(
+                By.XPATH,
+                "//a[contains(text(),'See more results')]"
+            )
             more_btn.click()
             time.sleep(5)
         except:
@@ -128,6 +146,10 @@ def run():
         time.sleep(6)
 
         take_screenshot(driver, "after_search")
+
+        if "login" in driver.current_url.lower():
+            print("❌ Redirected to login. Session invalid.")
+            return
 
         posts = collect_posts(driver)
 

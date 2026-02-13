@@ -28,7 +28,7 @@ def init_driver():
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
 
-    # For Jenkins (recommended)
+    # For Jenkins use these:
     # options.add_argument("--headless=new")
     # options.add_argument("--window-size=412,915")
 
@@ -48,10 +48,10 @@ def take_screenshot(driver, name):
     print("Screenshot saved:", path)
 
 
-# ================= LOAD COOKIES (FIXED) =================
+# ================= LOAD COOKIES =================
 def load_cookies(driver):
     if not os.path.exists(COOKIE_FILE):
-        print("❌ Cookie file not found.")
+        print("Cookie file not found.")
         return False
 
     print("Opening main Facebook site...")
@@ -72,10 +72,9 @@ def load_cookies(driver):
             cookie = {
                 "name": name,
                 "value": value,
-                "path": "/",
+                "path": "/"
             }
 
-            # Add expiry if valid
             if expiry.isdigit() and int(expiry) > 0:
                 cookie["expiry"] = int(expiry)
 
@@ -90,12 +89,11 @@ def load_cookies(driver):
     print("Current URL after login:", driver.current_url)
 
     if "login" in driver.current_url.lower():
-        print("❌ Login failed. Cookies expired.")
+        print("Login failed. Cookies expired.")
         return False
 
-    print("✅ Login successful.")
+    print("Login successful.")
     take_screenshot(driver, "after_cookies")
-
     return True
 
 
@@ -104,7 +102,7 @@ def collect_posts(driver, max_pages=5):
     post_urls = set()
 
     for page in range(max_pages):
-        print(f"Processing page {page+1}/{max_pages}")
+        print("Processing page", page + 1, "/", max_pages)
 
         links = driver.find_elements(
             By.XPATH,
@@ -117,7 +115,6 @@ def collect_posts(driver, max_pages=5):
                 clean = href.split("&")[0]
                 post_urls.add(clean)
 
-        # Click "See more results"
         try:
             more_btn = driver.find_element(
                 By.XPATH,
@@ -148,19 +145,20 @@ def run():
         take_screenshot(driver, "after_search")
 
         if "login" in driver.current_url.lower():
-            print("❌ Redirected to login. Session invalid.")
+            print("Redirected to login. Session invalid.")
             return
 
         posts = collect_posts(driver)
 
         print("\n========== POSTS FOUND ==========\n")
+
         for i, url in enumerate(sorted(posts), start=1):
-            print(f"{i}. {url}")
+            print(str(i) + ". " + url)
 
         print("\nTotal posts collected:", len(posts))
 
     except Exception as e:
-        print("Error:", e)
+        print("Error occurred:", str(e))
         take_screenshot(driver, "error_state")
 
     finally:

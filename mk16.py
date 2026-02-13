@@ -1,5 +1,6 @@
 import os
 import time
+from datetime import datetime
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
@@ -12,6 +13,13 @@ KEYWORD = "probate"
 SEARCH_URL = f"https://www.facebook.com/search/posts/?q={KEYWORD}"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
+OUTPUT_DIR = "output"
+SCREENSHOT_DIR = os.path.join(OUTPUT_DIR, "screenshots")
+
+os.makedirs(SCREENSHOT_DIR, exist_ok=True)
+
+TIMESTAMP = datetime.now().strftime("%Y%m%d_%H%M%S")
+
 
 # ================= DRIVER =================
 def init_driver():
@@ -20,9 +28,7 @@ def init_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    options.add_argument("--start-maximized")
-    # For Jenkins use headless:
-    # options.add_argument("--headless=new")
+    # options.add_argument("--headless=new")  # Enable in Jenkins
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -33,17 +39,33 @@ def init_driver():
     return driver
 
 
+# ================= FULL PAGE SCREENSHOT =================
+def take_screenshot(driver, name):
+    try:
+        # Resize window to full page height
+        total_height = driver.execute_script(
+            "return Math.max(document.body.scrollHeight, document.documentElement.scrollHeight);"
+        )
+        driver.set_window_size(1920, total_height)
+
+        path = os.path.join(
+            SCREENSHOT_DIR, f"{name}_{TIMESTAMP}.png"
+        )
+        driver.save_screenshot(path)
+        print(f"Screenshot saved: {path}")
+
+    except Exception as e:
+        print("Screenshot error:", e)
+
+
 # ================= LOAD COOKIES =================
 def load_cookies(driver):
     if not os.path.exists(COOKIE_FILE):
-        print("❌ Cookie file not found.")
+        print("Cookie file not found.")
         return False
 
-    print("Opening Facebook homepage...")
     driver.get("https://www.facebook.com/")
     time.sleep(5)
-
-    print("Injecting cookies...")
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
         for line in f:
@@ -71,41 +93,42 @@ def load_cookies(driver):
     driver.refresh()
     time.sleep(6)
 
-    print("Cookies loaded successfully.")
+    take_screenshot(driver, "after_cookies")
     return True
 
 
 # ================= COLLECT POSTS =================
-def collect_posts(driver, scrolls=10):
+def collect_posts(driver, scrolls=8):
     post_urls = set()
 
     for i in range(scrolls):
         print(f"Scrolling {i+1}/{scrolls}")
-
-        articles = driver.find_elements(By.XPATH, "//div[@role='article']")
-
-        for art in articles:
-            links = art.find_elements(By.XPATH, ".//a[@href]")
-            for a in links:
-                href = a.get_attribute("href")
-                if not href:
-                    continue
-
-                clean = href.split("?")[0]
-
-                if "/search/" in clean:
-                    continue
-
-                if (
-                    "/posts/" in clean
-                    or "permalink.php" in clean
-                    or "story_fbid=" in clean
-                    or ("/groups/" in clean and "/posts/" in clean)
-                ):
-                    post_urls.add(clean)
-
         driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
         time.sleep(4)
+
+    take_screenshot(driver, "after_scrolling")
+
+    articles = driver.find_elements(By.XPATH, "//div[@role='article']")
+
+    for art in articles:
+        links = art.find_elements(By.XPATH, ".//a[@href]")
+        for a in links:
+            href = a.get_attribute("href")
+            if not href:
+                continue
+
+            clean = href.split("?")[0]
+
+            if "/search/" in clean:
+                continue
+
+            if (
+                "/posts/" in clean
+                or "permalink.php" in clean
+                or "story_fbid=" in clean
+                or ("/groups/" in clean and "/posts/" in clean)
+            ):
+                post_urls.add(clean)
 
     return post_urls
 
@@ -122,14 +145,19 @@ def run():
         driver.get(SEARCH_URL)
         time.sleep(8)
 
+        take_screenshot(driver, "after_search")
+
         posts = collect_posts(driver)
 
-        print("\n================ POSTS FOUND ================\n")
-
+        print("\n===== POSTS FOUND =====\n")
         for i, url in enumerate(sorted(posts), start=1):
             print(f"{i}. {url}")
 
-        print("\nTotal posts collected:", len(posts))
+        print("\nTotal posts:", len(posts))
+
+    except Exception as e:
+        print("Error:", e)
+        take_screenshot(driver, "error_state")
 
     finally:
         driver.quit()

@@ -4,13 +4,13 @@ from datetime import datetime
 
 from selenium import webdriver
 from selenium.webdriver.common.by import By
-from selenium.webdriver.common.keys import Keys
 from selenium.webdriver.chrome.service import Service
 from webdriver_manager.chrome import ChromeDriverManager
 
 
 # ================= CONFIG =================
 KEYWORD = "probate"
+SEARCH_URL = f"https://mbasic.facebook.com/search/posts/?q={KEYWORD}"
 COOKIE_FILE = os.path.join("cookies", "facebook_cookies.txt")
 
 OUTPUT_DIR = "output"
@@ -27,9 +27,10 @@ def init_driver():
     options.add_argument("--disable-blink-features=AutomationControlled")
     options.add_argument("--no-sandbox")
     options.add_argument("--disable-dev-shm-usage")
-    # For Jenkins:
+
+    # Recommended for Jenkins
     # options.add_argument("--headless=new")
-    # options.add_argument("--window-size=1920,3000")
+    # options.add_argument("--window-size=412,915")
 
     driver = webdriver.Chrome(
         service=Service(ChromeDriverManager().install()),
@@ -53,7 +54,7 @@ def load_cookies(driver):
         print("Cookie file not found.")
         return False
 
-    driver.get("https://www.facebook.com/")
+    driver.get("https://mbasic.facebook.com/")
     time.sleep(5)
 
     with open(COOKIE_FILE, "r", encoding="utf-8") as f:
@@ -70,8 +71,8 @@ def load_cookies(driver):
             cookie = {
                 "name": name,
                 "value": value,
-                "domain": domain,
-                "path": path
+                "domain": ".facebook.com",
+                "path": "/"
             }
 
             try:
@@ -80,70 +81,37 @@ def load_cookies(driver):
                 continue
 
     driver.refresh()
-    time.sleep(6)
+    time.sleep(5)
 
     take_screenshot(driver, "after_cookies")
     return True
 
 
-# ================= SEARCH USING SEARCH BOX =================
-def search_keyword(driver):
-    print("Searching for:", KEYWORD)
-
-    search_box = driver.find_element(By.XPATH, "//input[@type='search']")
-    search_box.clear()
-    search_box.send_keys(KEYWORD)
-    search_box.send_keys(Keys.ENTER)
-
-    time.sleep(8)
-    take_screenshot(driver, "after_search")
-
-    # Click "Posts" tab
-    try:
-        posts_tab = driver.find_element(
-            By.XPATH,
-            "//a[contains(@href,'/search/posts') or contains(text(),'Posts')]"
-        )
-        posts_tab.click()
-        time.sleep(6)
-        take_screenshot(driver, "after_posts_tab")
-    except:
-        print("Posts tab not found (continuing).")
-
-
 # ================= COLLECT POSTS =================
-def collect_posts(driver, scrolls=8):
+def collect_posts(driver, max_pages=5):
     post_urls = set()
 
-    for i in range(scrolls):
-        print(f"Scrolling {i+1}/{scrolls}")
-        driver.execute_script("window.scrollTo(0, document.body.scrollHeight);")
-        time.sleep(4)
+    for page in range(max_pages):
+        print(f"Processing page {page+1}/{max_pages}")
 
-    take_screenshot(driver, "after_scrolling")
+        links = driver.find_elements(By.XPATH, "//a[contains(@href,'/story.php') or contains(@href,'/posts/')]")
 
-    articles = driver.find_elements(By.XPATH, "//div[@role='article']")
-
-    for art in articles:
-        links = art.find_elements(By.XPATH, ".//a[@href]")
         for a in links:
             href = a.get_attribute("href")
-            if not href:
-                continue
-
-            clean = href.split("?")[0]
-
-            if "/search/" in clean:
-                continue
-
-            if (
-                "/posts/" in clean
-                or "permalink.php" in clean
-                or "story_fbid=" in clean
-                or ("/groups/" in clean and "/posts/" in clean)
-            ):
+            if href:
+                clean = href.split("&")[0]
                 post_urls.add(clean)
 
+        # Try clicking "See more results"
+        try:
+            more_btn = driver.find_element(By.XPATH, "//a[contains(text(),'See more results')]")
+            more_btn.click()
+            time.sleep(5)
+        except:
+            print("No more pages found.")
+            break
+
+    take_screenshot(driver, "after_collection")
     return post_urls
 
 
@@ -155,7 +123,11 @@ def run():
         if not load_cookies(driver):
             return
 
-        search_keyword(driver)
+        print("Opening mbasic search page...")
+        driver.get(SEARCH_URL)
+        time.sleep(6)
+
+        take_screenshot(driver, "after_search")
 
         posts = collect_posts(driver)
 
@@ -163,7 +135,7 @@ def run():
         for i, url in enumerate(sorted(posts), start=1):
             print(f"{i}. {url}")
 
-        print("\nTotal posts:", len(posts))
+        print("\nTotal posts collected:", len(posts))
 
     except Exception as e:
         print("Error:", e)
